@@ -1,10 +1,9 @@
 #!/bin/bash
 # ============================================================
 # Destiny 2 Matchmaking Firewall
-# Steam Datagram Relay + OpenVPN + AWS
+# Steam Datagram Relay + PSN + OpenVPN + AWS
 # Teardown-based matchmaking control
-#
-# Legacy compatible with d2firewall.sh (-a start/stop/etc)
+# Legacy compatible with d2firewall.sh (-a ...)
 # ============================================================
 
 ######################## CONFIG ########################
@@ -27,13 +26,15 @@ STATE_FILE="$STATE_DIR/firewall.state"
 VERSION_FILE="$BASE_DIR/VERSION"
 
 STEAM_REGEX="steamid:[0-9]{17}"
+PSN_REGEX="psn-4[0-9A-Fa-f]{7,16}"
+ID_REGEX="($STEAM_REGEX|$PSN_REGEX)"
 
 #######################################################
 
 mkdir -p "$CACHE_DIR" "$RULES_DIR" "$STATE_DIR"
 touch "$SESSION_LOG" "$LAST_LOBBY" "$KNOWN_IDS" "$ALLOW_LIST" "$BLOCK_LIST" "$STATE_FILE"
 
-[[ ! -f "$VERSION_FILE" ]] && echo "1.0.0" > "$VERSION_FILE"
+[[ ! -f "$VERSION_FILE" ]] && echo "1.1.0" > "$VERSION_FILE"
 
 ######################## CHECKS ########################
 
@@ -57,22 +58,22 @@ set_state() {
   echo "$1" > "$STATE_FILE"
 }
 
-#################### OBSERVE (SNIFF) ##################
+#################### OBSERVE / SNIFF ##################
 
 observe() {
-  echo "[*] Observando teardown do Destiny 2"
+  echo "[*] Observando teardown do Destiny 2 (Steam + PSN)"
   echo "[*] Pressione qualquer tecla para parar"
 
   ngrep -l -q -W byline -d "$INTERFACE" udp | \
-  grep --line-buffered -E "$STEAM_REGEX" | \
+  grep --line-buffered -E "$ID_REGEX" | \
   while read -r line; do
     ip=$(echo "$line" | awk '{print $1}')
-    steamid=$(echo "$line" | grep -oE "$STEAM_REGEX")
+    id=$(echo "$line" | grep -oE "$ID_REGEX")
     ts=$(date +"%Y-%m-%d %H:%M:%S")
 
-    echo "$ts $ip $steamid" >> "$SESSION_LOG"
-    echo "$ip $steamid" >> "$LAST_LOBBY"
-    echo "$steamid" >> "$KNOWN_IDS"
+    echo "$ts $ip $id" >> "$SESSION_LOG"
+    echo "$ip $id" >> "$LAST_LOBBY"
+    echo "$id" >> "$KNOWN_IDS"
 
     awk '!a[$0]++' "$LAST_LOBBY" > /tmp/lb && mv /tmp/lb "$LAST_LOBBY"
     awk '!a[$0]++' "$KNOWN_IDS" > /tmp/ki && mv /tmp/ki "$KNOWN_IDS"
@@ -120,18 +121,8 @@ list_lobby() {
   nl -w2 -s'. ' "$LAST_LOBBY"
 }
 
-list_allow() {
-  echo "=== ALLOW LIST ==="
-  nl -w2 -s'. ' "$ALLOW_LIST"
-}
-
-list_block() {
-  echo "=== BLOCK LIST ==="
-  nl -w2 -s'. ' "$BLOCK_LIST"
-}
-
 list_known() {
-  echo "=== STEAM IDS CONHECIDOS ==="
+  echo "=== IDS CONHECIDOS (STEAM / PSN) ==="
   nl -w2 -s'. ' "$KNOWN_IDS"
 }
 
@@ -151,7 +142,7 @@ next_session() {
 ################## EDITAR REGRAS ######################
 
 allow_id() {
-  read -p "SteamID para ALLOW: " id
+  read -p "SteamID ou PSNID para ALLOW: " id
   [[ -z "$id" ]] && return
   echo "$id" >> "$ALLOW_LIST"
   awk '!a[$0]++' "$ALLOW_LIST" > /tmp/a && mv /tmp/a "$ALLOW_LIST"
@@ -159,7 +150,7 @@ allow_id() {
 }
 
 block_id() {
-  read -p "SteamID para BLOCK: " id
+  read -p "SteamID ou PSNID para BLOCK: " id
   [[ -z "$id" ]] && return
   echo "$id" >> "$BLOCK_LIST"
   awk '!a[$0]++' "$BLOCK_LIST" > /tmp/b && mv /tmp/b "$BLOCK_LIST"
@@ -181,15 +172,10 @@ ACTION=""
 while getopts "a:" opt; do
   case $opt in
     a) ACTION="$OPTARG" ;;
-    *) echo "Uso: -a {start|stop|observe|sniff|lobby|allow|block|next|state|update}" ;;
   esac
 done
 
-if [[ -n "$ACTION" ]]; then
-  CMD="$ACTION"
-else
-  CMD="$1"
-fi
+CMD="${ACTION:-$1}"
 
 ######################## MENU #########################
 
@@ -205,18 +191,13 @@ case "$CMD" in
   known) list_known ;;
   update) update_script ;;
   *)
-    echo "Uso (legacy):"
-    echo "  sudo bash destiny2-mm.sh -a observe"
+    echo "Uso:"
+    echo "  sudo bash destiny2-mm.sh -a sniff"
     echo "  sudo bash destiny2-mm.sh -a start"
     echo "  sudo bash destiny2-mm.sh -a stop"
     echo "  sudo bash destiny2-mm.sh -a lobby"
     echo "  sudo bash destiny2-mm.sh -a allow"
     echo "  sudo bash destiny2-mm.sh -a block"
     echo "  sudo bash destiny2-mm.sh -a next"
-    echo
-    echo "Uso (direto):"
-    echo "  sudo ./destiny2-mm.sh observe"
-    echo "  sudo ./destiny2-mm.sh start"
-    echo "  sudo ./destiny2-mm.sh stop"
     ;;
 esac
