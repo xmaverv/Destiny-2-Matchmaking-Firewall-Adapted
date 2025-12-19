@@ -58,6 +58,15 @@ sudo iptables -A FORWARD -p udp --sport 3074 -j ACCEPT
 sudo iptables -A FORWARD -p udp --dport 30000:45000 -j ACCEPT
 sudo iptables -A FORWARD -p udp --sport 30000:45000 -j ACCEPT
 
+ #allow openvpn
+  if ip a | grep -q "tun0"; then
+    if ! sudo iptables-save | grep -q "POSTROUTING -s 10.8.0.0/24"; then
+      sudo iptables -t nat -A POSTROUTING -s 10.8.0.0/24 -o eth0 -j MASQUERADE
+    fi
+    sudo iptables -A INPUT -p udp -m udp --dport 1194 -j ACCEPT
+    sudo iptables -A FORWARD -m state --state RELATED,ESTABLISHED -j ACCEPT
+    sudo iptables -A FORWARD -s 10.8.0.0/24 -j ACCEPT
+  fi
 }
 
 
