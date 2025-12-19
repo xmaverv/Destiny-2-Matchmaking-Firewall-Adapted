@@ -32,7 +32,7 @@ reset_ip_tables () {
   sudo sysctl -w net.ipv4.ip_forward=1 > /dev/null
 
   # NAT OpenVPN (cone-friendly)
-  sudo iptables -t nat -A POSTROUTING -s 10.8.0.0/24 -o eth0 -j MASQUERADE --random-fully
+  iptables -t nat -A POSTROUTING -s 10.8.0.0/24 -o ens5 -j MASQUERADE --random-fully
 
   # OpenVPN
   sudo iptables -A INPUT -i tun0 -j ACCEPT
