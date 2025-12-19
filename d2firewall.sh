@@ -1,40 +1,34 @@
 #!/bin/bash
 # ============================================================
-# Destiny 2 Matchmaking Firewall
-# Steam Datagram Relay + PSN + OpenVPN + AWS
-# Teardown-based matchmaking control
-# Legacy compatible with d2firewall.sh (-a ...)
+# Destiny 2 Firewall – Console / Router / OpenVPN / AWS
+#
+# MODELO ATUAL (FUNCIONAL):
+# - Registra PSNID no teardown (histórico)
+# - Registra IP remoto SDR usado na sessão
+# - Controle MANUAL de matchmaking (liga / desliga)
+# - -a start  → bloqueio TOTAL de novas conexões
+# - -a stop   → libera tudo
+#
+# NÃO tenta permitir jogador por PSNID (isso não funciona mais)
 # ============================================================
 
 ######################## CONFIG ########################
 
-INTERFACE="tun0"
+INTERFACE="tun0"          # interface do túnel OpenVPN
+STATE_DIR="state"
+CACHE_DIR="cache"
 
-BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
-CACHE_DIR="$BASE_DIR/cache"
-RULES_DIR="$BASE_DIR/rules"
-STATE_DIR="$BASE_DIR/state"
-
+PSN_LOG="$CACHE_DIR/psnid.log"
+SDR_LOG="$CACHE_DIR/sdr_ips.log"
 SESSION_LOG="$CACHE_DIR/sessions.log"
-LAST_LOBBY="$CACHE_DIR/last_lobby.txt"
-KNOWN_IDS="$CACHE_DIR/known_ids.txt"
-
-ALLOW_LIST="$RULES_DIR/allow.txt"
-BLOCK_LIST="$RULES_DIR/block.txt"
-
 STATE_FILE="$STATE_DIR/firewall.state"
-VERSION_FILE="$BASE_DIR/VERSION"
 
-STEAM_REGEX="steamid:[0-9]{17}"
 PSN_REGEX="psn-4[0-9A-Fa-f]{7,16}"
-ID_REGEX="($STEAM_REGEX|$PSN_REGEX)"
 
 #######################################################
 
-mkdir -p "$CACHE_DIR" "$RULES_DIR" "$STATE_DIR"
-touch "$SESSION_LOG" "$LAST_LOBBY" "$KNOWN_IDS" "$ALLOW_LIST" "$BLOCK_LIST" "$STATE_FILE"
-
-[[ ! -f "$VERSION_FILE" ]] && echo "1.1.0" > "$VERSION_FILE"
+mkdir -p "$CACHE_DIR" "$STATE_DIR"
+touch "$PSN_LOG" "$SDR_LOG" "$SESSION_LOG" "$STATE_FILE"
 
 ######################## CHECKS ########################
 
@@ -58,29 +52,45 @@ set_state() {
   echo "$1" > "$STATE_FILE"
 }
 
-#################### OBSERVE / SNIFF ##################
+#################### SNIFF / OBSERVE ##################
 
 observe() {
-  echo "[*] Observando teardown do Destiny 2 (Steam + PSN)"
+  echo "[*] Observando teardown do Destiny 2"
+  echo "[*] Registrando PSNID + IP remoto SDR"
   echo "[*] Pressione qualquer tecla para parar"
 
   ngrep -l -q -W byline -d "$INTERFACE" udp | \
-  grep --line-buffered -E "$ID_REGEX" | \
   while read -r line; do
-    ip=$(echo "$line" | awk '{print $1}')
-    id=$(echo "$line" | grep -oE "$ID_REGEX")
-    ts=$(date +"%Y-%m-%d %H:%M:%S")
 
-    echo "$ts $ip $id" >> "$SESSION_LOG"
-    echo "$ip $id" >> "$LAST_LOBBY"
-    echo "$id" >> "$KNOWN_IDS"
+    # IP remoto (SDR / peer)
+    REMOTE_IP=$(echo "$line" | awk '{print $1}')
 
-    awk '!a[$0]++' "$LAST_LOBBY" > /tmp/lb && mv /tmp/lb "$LAST_LOBBY"
-    awk '!a[$0]++' "$KNOWN_IDS" > /tmp/ki && mv /tmp/ki "$KNOWN_IDS"
+    # PSNID (se existir)
+    PSNID=$(echo "$line" | grep -oE "$PSN_REGEX")
+
+    TS=$(date +"%Y-%m-%d %H:%M:%S")
+
+    # Sempre registra IP remoto (é isso que importa para controle)
+    if [[ -n "$REMOTE_IP" ]]; then
+      echo "$REMOTE_IP" >> "$SDR_LOG"
+      echo "$TS IP $REMOTE_IP" >> "$SESSION_LOG"
+    fi
+
+    # Registra PSNID apenas como histórico
+    if [[ -n "$PSNID" ]]; then
+      echo "$PSNID" >> "$PSN_LOG"
+      echo "$TS PSN $PSNID" >> "$SESSION_LOG"
+    fi
+
+    # remove duplicados
+    awk '!a[$0]++' "$SDR_LOG" > /tmp/sdr && mv /tmp/sdr "$SDR_LOG"
+    awk '!a[$0]++' "$PSN_LOG" > /tmp/psn && mv /tmp/psn "$PSN_LOG"
+
   done &
 
   read -n 1
   pkill -15 ngrep
+
   echo
   echo "[✓] Observação finalizada"
 }
@@ -88,26 +98,22 @@ observe() {
 #################### FIREWALL #########################
 
 start_firewall() {
-  echo "[*] Ativando controle de matchmaking"
+  echo "[*] Ativando bloqueio TOTAL de novas conexões"
 
   iptables -F FORWARD
 
-  while read -r id; do
-    [[ -z "$id" ]] && continue
-    iptables -I FORWARD -i "$INTERFACE" -m string --string "$id" --algo bm -j ACCEPT
-  done < "$ALLOW_LIST"
+  # Permite conexões já estabelecidas
+  iptables -I FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 
-  while read -r id; do
-    [[ -z "$id" ]] && continue
-    iptables -A FORWARD -i "$INTERFACE" -m string --string "$id" --algo bm -j DROP
-  done < "$BLOCK_LIST"
+  # BLOQUEIA TODAS as novas conexões UDP (matchmaking)
+  iptables -A FORWARD -p udp -m conntrack --ctstate NEW -j DROP
 
   set_state "started"
-  echo "[✓] Firewall ATIVO"
+  echo "[✓] Firewall ATIVO – novas conexões BLOQUEADAS"
 }
 
 stop_firewall() {
-  echo "[*] Desativando controle de matchmaking"
+  echo "[*] Desativando firewall"
   iptables -F FORWARD
   set_state "stopped"
   echo "[✓] Firewall DESATIVADO"
@@ -115,57 +121,21 @@ stop_firewall() {
 
 #################### LISTAGENS ########################
 
-list_lobby() {
-  echo "=== ÚLTIMO LOBBY ==="
-  [[ ! -s "$LAST_LOBBY" ]] && echo "(vazio)" && return
-  nl -w2 -s'. ' "$LAST_LOBBY"
+list_psn() {
+  echo "=== PSNIDs REGISTRADAS (HISTÓRICO) ==="
+  nl -ba "$PSN_LOG"
 }
 
-list_known() {
-  echo "=== IDS CONHECIDOS (STEAM / PSN) ==="
-  nl -w2 -s'. ' "$KNOWN_IDS"
+list_sdr() {
+  echo "=== IPs SDR REGISTRADOS ==="
+  nl -ba "$SDR_LOG"
 }
 
-################ PREVIEW PRÓXIMA SESSÃO ###############
-
-next_session() {
-  echo "=== PRÓXIMA SESSÃO (PREVISTA) ==="
-
-  if [[ ! -s "$ALLOW_LIST" ]]; then
-    echo "ALLOW vazio → lobby aberto"
-    return
-  fi
-
-  grep -v -F -f "$BLOCK_LIST" "$ALLOW_LIST" | nl -w2 -s'. '
+list_state() {
+  echo "Estado: $(get_state)"
 }
 
-################## EDITAR REGRAS ######################
-
-allow_id() {
-  read -p "SteamID ou PSNID para ALLOW: " id
-  [[ -z "$id" ]] && return
-  echo "$id" >> "$ALLOW_LIST"
-  awk '!a[$0]++' "$ALLOW_LIST" > /tmp/a && mv /tmp/a "$ALLOW_LIST"
-  echo "[✓] ID permitido"
-}
-
-block_id() {
-  read -p "SteamID ou PSNID para BLOCK: " id
-  [[ -z "$id" ]] && return
-  echo "$id" >> "$BLOCK_LIST"
-  awk '!a[$0]++' "$BLOCK_LIST" > /tmp/b && mv /tmp/b "$BLOCK_LIST"
-  echo "[✓] ID bloqueado"
-}
-
-#################### UPDATE ###########################
-
-update_script() {
-  echo "[*] Atualização via git"
-  echo "Versão atual: $(cat "$VERSION_FILE")"
-  echo "Use: git pull"
-}
-
-################ LEGACY FLAGS (-a) ###################
+#################### LEGACY FLAGS #####################
 
 ACTION=""
 
@@ -180,24 +150,36 @@ CMD="${ACTION:-$1}"
 ######################## MENU #########################
 
 case "$CMD" in
-  observe|sniff) observe ;;
-  start) start_firewall ;;
-  stop) stop_firewall ;;
-  state) echo "Estado: $(get_state)" ;;
-  lobby) list_lobby ;;
-  allow) allow_id ;;
-  block) block_id ;;
-  next) next_session ;;
-  known) list_known ;;
-  update) update_script ;;
+  sniff|observe)
+    observe
+    ;;
+  start)
+    start_firewall
+    ;;
+  stop)
+    stop_firewall
+    ;;
+  state)
+    list_state
+    ;;
+  list)
+    echo "Use:"
+    echo "  -a list psn"
+    echo "  -a list sdr"
+    ;;
+  psn)
+    list_psn
+    ;;
+  sdr)
+    list_sdr
+    ;;
   *)
-    echo "Uso:"
-    echo "  sudo bash destiny2-mm.sh -a sniff"
-    echo "  sudo bash destiny2-mm.sh -a start"
-    echo "  sudo bash destiny2-mm.sh -a stop"
-    echo "  sudo bash destiny2-mm.sh -a lobby"
-    echo "  sudo bash destiny2-mm.sh -a allow"
-    echo "  sudo bash destiny2-mm.sh -a block"
-    echo "  sudo bash destiny2-mm.sh -a next"
+    echo "Uso (modo antigo):"
+    echo "  sudo bash d2firewall.sh -a sniff"
+    echo "  sudo bash d2firewall.sh -a start"
+    echo "  sudo bash d2firewall.sh -a stop"
+    echo "  sudo bash d2firewall.sh -a state"
+    echo "  sudo bash d2firewall.sh -a psn"
+    echo "  sudo bash d2firewall.sh -a sdr"
     ;;
 esac
