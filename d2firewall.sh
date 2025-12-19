@@ -31,42 +31,41 @@ reset_ip_tables () {
   # Ativar forward
   sudo sysctl -w net.ipv4.ip_forward=1 > /dev/null
 
-  # NAT OpenVPN (cone-friendly)
-  sudo iptables -t nat -A POSTROUTING -s 10.8.0.0/24 -o ens5 -j MASQUERADE --random-fully
-
-# Conntrack correto (evita NAT simétrico)
-sudo iptables -A FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
-sudo iptables -A FORWARD -m conntrack --ctstate NEW -j ACCEPT
-
-# Portas essenciais PSN / PS4
-sudo iptables -A FORWARD -p udp --dport 3478:3480 -j ACCEPT
-sudo iptables -A FORWARD -p udp --sport 3478:3480 -j ACCEPT
-sudo iptables -A FORWARD -p udp --dport 3074 -j ACCEPT
-sudo iptables -A FORWARD -p udp --sport 3074 -j ACCEPT
-
-  # OpenVPN
-  sudo iptables -A INPUT -i tun0 -j ACCEPT
+  # =========================
+  # OpenVPN base
+  # =========================
+  sudo iptables -A INPUT -p udp --dport 1194 -j ACCEPT
+  sudo iptables -A INPUT  -i tun0 -j ACCEPT
   sudo iptables -A OUTPUT -o tun0 -j ACCEPT
+  sudo iptables -A FORWARD -i tun0 -j ACCEPT
+  sudo iptables -A FORWARD -o tun0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
 
+  # NAT cone-friendly
+  sudo iptables -t nat -A POSTROUTING -s 10.8.0.0/24 -o ens5 -j MASQUERADE --random-fully
+  
+  # =========================
   # UDP State (CRÍTICO PARA NAT ABERTO)
+  # =========================
   sudo iptables -A FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
   sudo iptables -A FORWARD -m conntrack --ctstate NEW -j ACCEPT
-  
-  # Destiny 2 - portas UDP comuns (fallback)
-sudo iptables -A FORWARD -p udp --dport 3074 -j ACCEPT
-sudo iptables -A FORWARD -p udp --sport 3074 -j ACCEPT
-sudo iptables -A FORWARD -p udp --dport 30000:45000 -j ACCEPT
-sudo iptables -A FORWARD -p udp --sport 30000:45000 -j ACCEPT
 
- #allow openvpn
-  if ip a | grep -q "tun0"; then
-    if ! sudo iptables-save | grep -q "POSTROUTING -s 10.8.0.0/24"; then
-      sudo iptables -t nat -A POSTROUTING -s 10.8.0.0/24 -o eth0 -j MASQUERADE
-    fi
-    sudo iptables -A INPUT -p udp -m udp --dport 1194 -j ACCEPT
-    sudo iptables -A FORWARD -m state --state RELATED,ESTABLISHED -j ACCEPT
-    sudo iptables -A FORWARD -s 10.8.0.0/24 -j ACCEPT
-  fi
+  # =========================
+  # Destiny 2 / PSN - UDP
+  # =========================
+
+  # Porta principal PSN / Destiny
+  sudo iptables -A FORWARD -p udp --dport 3074 -j ACCEPT
+  sudo iptables -A FORWARD -p udp --sport 3074 -j ACCEPT
+
+  # PSN NAT traversal
+  sudo iptables -A FORWARD -p udp --dport 3478:3480 -j ACCEPT
+  sudo iptables -A FORWARD -p udp --sport 3478:3480 -j ACCEPT
+
+  # Destiny 2 P2P (fallback)
+  sudo iptables -A FORWARD -p udp --dport 30000:45000 -j ACCEPT
+  sudo iptables -A FORWARD -p udp --sport 30000:45000 -j ACCEPT
+
+
 }
 
 
