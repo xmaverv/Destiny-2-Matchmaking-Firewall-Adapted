@@ -32,7 +32,17 @@ reset_ip_tables () {
   sudo sysctl -w net.ipv4.ip_forward=1 > /dev/null
 
   # NAT OpenVPN (cone-friendly)
-  iptables -t nat -A POSTROUTING -s 10.8.0.0/24 -o ens5 -j MASQUERADE --random-fully
+  sudo iptables -t nat -A POSTROUTING -s 10.8.0.0/24 -o ens5 -j MASQUERADE --random-fully
+
+# Conntrack correto (evita NAT simétrico)
+sudo iptables -A FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+sudo iptables -A FORWARD -m conntrack --ctstate NEW -j ACCEPT
+
+# Portas essenciais PSN / PS4
+sudo iptables -A FORWARD -p udp --dport 3478:3480 -j ACCEPT
+sudo iptables -A FORWARD -p udp --sport 3478:3480 -j ACCEPT
+sudo iptables -A FORWARD -p udp --dport 3074 -j ACCEPT
+sudo iptables -A FORWARD -p udp --sport 3074 -j ACCEPT
 
   # OpenVPN
   sudo iptables -A INPUT -i tun0 -j ACCEPT
