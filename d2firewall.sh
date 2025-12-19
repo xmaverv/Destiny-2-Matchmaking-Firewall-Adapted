@@ -17,58 +17,39 @@ while getopts "a:" opt; do
 done
 
 reset_ip_tables () {
-  sudo service iptables restart
-
-  #reset iptables to default
-  sudo iptables -P INPUT ACCEPT
-  sudo iptables -P FORWARD ACCEPT
-  sudo iptables -P OUTPUT ACCEPT
-
   sudo iptables -F
   sudo iptables -X
+  sudo iptables -t nat -F
+  sudo iptables -t nat -X
+  sudo iptables -t mangle -F
+  sudo iptables -t mangle -X
 
-  #allow openvpn
-  if ip a | grep -q "tun0"; then
-    if ! sudo iptables-save | grep -q "POSTROUTING -s 10.8.0.0/24"; then
-      sudo iptables -t nat -A POSTROUTING -s 10.8.0.0/24 -o eth0 -j MASQUERADE
-    fi
-    sudo iptables -A INPUT -s 103.10.124.99 -j DROP
-    sudo iptables -A INPUT -s 103.10.125.146 -j DROP
-    sudo iptables -A INPUT -s 139.45.193.10 -j DROP
-    sudo iptables -A INPUT -s 146.66.154.35 -j DROP
-    sudo iptables -A INPUT -s 146.66.155.52 -j DROP
-    sudo iptables -A INPUT -s 155.133.230.67 -j DROP
-    sudo iptables -A INPUT -s 155.133.232.98 -j DROP
-    sudo iptables -A INPUT -s 155.133.233.99 -j DROP
-    sudo iptables -A INPUT -s 155.133.235.18 -j DROP
-    sudo iptables -A INPUT -s 155.133.235.34 -j DROP
-    sudo iptables -A INPUT -s 155.133.238.162 -j DROP
-    sudo iptables -A INPUT -s 155.133.239.59 -j DROP
-    sudo iptables -A INPUT -s 155.133.245.34 -j DROP
-    sudo iptables -A INPUT -s 155.133.246.50 -j DROP
-    sudo iptables -A INPUT -s 155.133.248.52 -j DROP
-    sudo iptables -A INPUT -s 155.133.249.194 -j DROP
-    sudo iptables -A INPUT -s 155.133.250.130 -j DROP
-    sudo iptables -A INPUT -s 155.133.252.51 -j DROP
-    sudo iptables -A INPUT -s 155.133.253.4 -j DROP
-    sudo iptables -A INPUT -s 155.133.254.138 -j DROP
-    sudo iptables -A INPUT -s 162.254.192.70 -j DROP
-    sudo iptables -A INPUT -s 162.254.193.101 -j DROP
-    sudo iptables -A INPUT -s 162.254.195.86 -j DROP
-    sudo iptables -A INPUT -s 162.254.196.66 -j DROP
-    sudo iptables -A INPUT -s 162.254.198.103 -j DROP
-    sudo iptables -A INPUT -s 162.254.199.178 -j DROP
-    sudo iptables -A INPUT -s 185.25.182.68 -j DROP
-    sudo iptables -A INPUT -s 185.25.183.178 -j DROP
-    sudo iptables -A INPUT -s 190.217.33.66 -j DROP
-    sudo iptables -A INPUT -s 205.196.6.74 -j DROP
-    sudo iptables -A INPUT -s 205.209.16.137 -j DROP
-    sudo iptables -A INPUT -s 205.234.119.194 -j DROP
-    sudo iptables -A INPUT -p udp -m udp --dport 1194 -j ACCEPT
-    sudo iptables -A FORWARD -m state --state RELATED,ESTABLISHED -j ACCEPT
-    sudo iptables -A FORWARD -s 10.8.0.0/24 -j ACCEPT
-  fi
+  sudo iptables -P INPUT ACCEPT
+  sudo iptables -P OUTPUT ACCEPT
+  sudo iptables -P FORWARD ACCEPT
+
+  # Ativar forward
+  sudo sysctl -w net.ipv4.ip_forward=1 > /dev/null
+
+  # NAT OpenVPN (cone-friendly)
+  sudo iptables -t nat -A POSTROUTING -s 10.8.0.0/24 -o eth0 -j MASQUERADE --random-fully
+
+  # OpenVPN
+  sudo iptables -A INPUT -i tun0 -j ACCEPT
+  sudo iptables -A OUTPUT -o tun0 -j ACCEPT
+
+  # UDP State (CRÍTICO PARA NAT ABERTO)
+  sudo iptables -A FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+  sudo iptables -A FORWARD -m conntrack --ctstate NEW -j ACCEPT
+  
+  # Destiny 2 - portas UDP comuns (fallback)
+sudo iptables -A FORWARD -p udp --dport 3074 -j ACCEPT
+sudo iptables -A FORWARD -p udp --sport 3074 -j ACCEPT
+sudo iptables -A FORWARD -p udp --dport 30000:45000 -j ACCEPT
+sudo iptables -A FORWARD -p udp --sport 30000:45000 -j ACCEPT
+
 }
+
 
 get_platform_match_str () {
   local val="psn-4"
@@ -194,8 +175,8 @@ setup () {
 
   mv /tmp/data.txt ./data.txt
 
-  echo "-m string --string $reject_str --algo bm -j REJECT" > reject.rule
-  sudo iptables -I FORWARD -m string --string $reject_str --algo bm -j REJECT
+  echo "-m string --string $reject_str --algo bm -j DROP" > reject.rule
+sudo iptables -I FORWARD -m string --string $reject_str --algo bm -j DROP
   
   n=${#ids[*]}
   INDEX=1
@@ -255,7 +236,7 @@ elif [ "$action" == "stop" ]; then
   reject=$(<reject.rule)
   sudo iptables -D FORWARD $reject
 elif [ "$action" == "start" ]; then
-  if ! sudo iptables-save | grep -q "REJECT"; then
+  if ! sudo iptables-save | grep -q "DROP"; then
     echo "Matchmaking is now being restricted."
     pos=$(iptables -L FORWARD | grep "system" | wc -l)
     ((pos++))
