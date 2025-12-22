@@ -39,9 +39,9 @@ reset_ip_tables () {
 }
 
 get_platform_match_str () {
-  local val="SDR-4"
-  if [ "$1" == "SDR" ]; then
-    val="SDR-4"
+  local val="psn-4"
+  if [ "$1" == "psn" ]; then
+    val="psn-4"
   elif [ "$1" == "xbox" ]; then
     val="xboxpwid:"
   elif [ "$1" == "steam" ]; then
@@ -89,9 +89,9 @@ setup () {
   echo "Setting up firewall rules."
   reset_ip_tables
 
-  read -p "Enter your platform xbox, SDR, steam: " platform
+  read -p "Enter your platform xbox, psn, steam: " platform
   platform=$(echo "$platform" | xargs)
-  platform=${platform:-"SDR"}
+  platform=${platform:-"psn"}
 
   reject_str=$(get_platform_match_str $platform)
   echo $platform > /tmp/data.txt
@@ -102,9 +102,9 @@ setup () {
   echo $net >> /tmp/data.txt
 
   ids=()
-  read -p "Would you like to sniff the ID automatically?(SDR/xbox/steam only) y/n: " yn
+  read -p "Would you like to sniff the ID automatically?(psn/xbox/steam only) y/n: " yn
   yn=${yn:-"y"}
-  if ! [[ $platform =~ ^(SDR|xbox|steam)$ ]]; then
+  if ! [[ $platform =~ ^(psn|xbox|steam)$ ]]; then
     yn="n"
   fi
   echo "n" >> /tmp/data.txt
@@ -114,11 +114,8 @@ setup () {
 
     echo -e "${RED}Press any key to stop sniffing. DO NOT CTRL C${NC}"
     sleep 1
-    if [ $platform == "SDR" ]; then
-    ngrep -q -W byline -d $INTERFACE 'SDR-4' udp portrange 27020-27050 \
-    | grep --line-buffered -oP '(?<=IP )([0-9]{1,3}\.){3}[0-9]{1,3}' \
-    | grep -v "$(ip -4 addr show $INTERFACE | grep -oP '(?<=inet\s)\d+(\.\d+){3}')" \
-    | sort -u | tee -a /tmp/data.txt &
+    if [ $platform == "psn" ]; then
+      ngrep -l -q -W byline -d $INTERFACE "psn-4" udp | grep --line-buffered -o -P 'psn-4[0]{8}\K[A-F0-9]{7}' | tee -a /tmp/data.txt &
     elif [ $platform == "xbox" ]; then
       ngrep -l -q -W byline -d $INTERFACE "xboxpwid:" udp | grep --line-buffered -o -P 'xboxpwid:[A-F0-9]{24}\K[A-F0-9]{8}' | tee -a /tmp/data.txt &
     elif [ $platform == "steam" ]; then
@@ -263,8 +260,8 @@ elif [ "$action" == "remove" ]; then
   fi;
 elif [ "$action" == "sniff" ]; then
   platform=$(sed -n '1p' < data.txt)
-  if ! [[ $platform =~ ^(SDR|xbox|steam)$ ]]; then
-      echo "Only SDR,xbox, and steam are supported atm."
+  if ! [[ $platform =~ ^(psn|xbox|steam)$ ]]; then
+      echo "Only psn,xbox, and steam are supported atm."
     exit 1
   fi
   bash d2firewall.sh -a stop
@@ -273,11 +270,8 @@ elif [ "$action" == "sniff" ]; then
   echo -e "${RED}Press any key to stop sniffing. DO NOT CTRL C${NC}"
 
   sleep 1
-  if [ $platform == "SDR" ]; then
-    ngrep -q -W byline -d $INTERFACE 'SDR-4' udp portrange 27020-27050 \
-    | grep --line-buffered -oP '(?<=IP )([0-9]{1,3}\.){3}[0-9]{1,3}' \
-    | grep -v "$(ip -4 addr show $INTERFACE | grep -oP '(?<=inet\s)\d+(\.\d+){3}')" \
-    | sort -u | tee -a /tmp/data.txt &
+  if [ $platform == "psn" ]; then
+    ngrep -l -q -W byline -d $INTERFACE "psn-4" udp | grep --line-buffered -o -P 'psn-4[0]{8}\K[A-F0-9]{7}' | tee -a data.txt &
   elif [ $platform == "xbox" ]; then
     ngrep -l -q -W byline -d $INTERFACE "xboxpwid:" udp | grep --line-buffered -o -P 'xboxpwid:[A-F0-9]{24}\K[A-F0-9]{8}' | tee -a data.txt &
   elif [ $platform == "steam" ]; then
