@@ -1,7 +1,7 @@
 #!/bin/bash
 # Destiny 2 Matchmaking Firewall
+# Steam SDR FINAL – OUTPUT + FORWARD
 # Original credits: @BasRaayman @inchenzo
-# Steam SDR IP adaptation – FIXED & RESTRICTIVE
 
 INTERFACE="tun0"
 DEFAULT_NET="10.8.0.0/24"
@@ -20,9 +20,11 @@ done
 
 reset_ip_tables () {
   sudo service iptables restart
+
   sudo iptables -P INPUT ACCEPT
   sudo iptables -P FORWARD ACCEPT
   sudo iptables -P OUTPUT ACCEPT
+
   sudo iptables -F
   sudo iptables -X
 
@@ -46,7 +48,7 @@ setup () {
 
   reset_ip_tables
 
-  read -p "Platform (psn/xbox/steam_sdr): " platform
+  read -p "Platform (steam_sdr only): " platform
   platform=${platform:-steam_sdr}
 
   read -p "Network/netmask: " net
@@ -58,26 +60,14 @@ setup () {
 
   ids=()
 
-  echo -e "${BLUE}Start matchmaking now.${NC}"
+  echo -e "${BLUE}Start matchmaking NOW.${NC}"
   echo -e "${RED}Press any key to stop sniffing.${NC}"
   sleep 1
 
-  if [ "$platform" == "psn" ]; then
-    ngrep -q -W byline -d $INTERFACE "psn-4" udp \
-    | grep --line-buffered -oP 'psn-4[0]{8}\K[A-F0-9]{7}' \
-    | tee -a /tmp/data.txt &
-
-  elif [ "$platform" == "xbox" ]; then
-    ngrep -q -W byline -d $INTERFACE "xboxpwid:" udp \
-    | grep --line-buffered -oP 'xboxpwid:[A-F0-9]{24}\K[A-F0-9]{8}' \
-    | tee -a /tmp/data.txt &
-
-  elif [ "$platform" == "steam_sdr" ]; then
-    ngrep -q -W byline -d $INTERFACE udp portrange 27020-27050 \
-    | grep --line-buffered -oP '(?<=IP )([0-9]{1,3}\.){3}[0-9]{1,3}' \
-    | grep -v "$(ip -4 addr show $INTERFACE | grep -oP '(?<=inet\s)\d+(\.\d+){3}')" \
-    | sort -u | tee -a /tmp/data.txt &
-  fi
+  ngrep -q -W byline -d $INTERFACE udp portrange 27020-27050 \
+  | grep --line-buffered -oP '(?<=IP )([0-9]{1,3}\.){3}[0-9]{1,3}' \
+  | grep -v "$(ip -4 addr show $INTERFACE | grep -oP '(?<=inet\s)\d+(\.\d+){3}')" \
+  | sort -u | tee -a /tmp/data.txt &
 
   while true; do read -t 1 -n 1 && break; done
   pkill -15 ngrep
@@ -88,10 +78,8 @@ setup () {
   awk "NR==4{print $snum}1" /tmp/data.txt > /tmp/t && mv /tmp/t /tmp/data.txt
 
   tmp_ids=$(tail -n +5 /tmp/data.txt)
-  c=1
-  while read -r line; do
-    ids+=( "system$c;$line" )
-    ((c++))
+  while read -r ip; do
+    ids+=( "$ip" )
   done <<< "$tmp_ids"
 
   mv /tmp/data.txt ./data.txt
@@ -100,23 +88,23 @@ setup () {
   # MATCHMAKING RESTRICTION
   # ==========================
 
-  if [ "$platform" == "steam_sdr" ]; then
+  # ALLOW WHITELISTED RELAYS (OUTPUT + FORWARD)
+  for ip in "${ids[@]}"; do
+    sudo iptables -I OUTPUT  -d "$ip" -p udp --dport 27020:27050 -j ACCEPT
+    sudo iptables -I OUTPUT  -s "$ip" -p udp --sport 27020:27050 -j ACCEPT
 
-    # ALLOW whitelisted relays
-    for i in "${ids[@]}"; do
-      IFS=';' read -r _ ip <<< "$i"
-      sudo iptables -I FORWARD -s "$ip" -p udp --dport 27020:27050 -j ACCEPT
-      sudo iptables -I FORWARD -d "$ip" -p udp --sport 27020:27050 -j ACCEPT
-    done
+    sudo iptables -I FORWARD -d "$ip" -p udp --dport 27020:27050 -j ACCEPT
+    sudo iptables -I FORWARD -s "$ip" -p udp --sport 27020:27050 -j ACCEPT
+  done
 
-    # DEFAULT DENY
-    echo "-p udp --dport 27020:27050 -j REJECT" > reject.rule
-    sudo iptables -A FORWARD -p udp --dport 27020:27050 -j REJECT
-  fi
+  # DEFAULT DENY (CRÍTICO)
+  echo "-p udp --dport 27020:27050 -j REJECT" > reject.rule
+  sudo iptables -A OUTPUT  -p udp --dport 27020:27050 -j REJECT
+  sudo iptables -A FORWARD -p udp --dport 27020:27050 -j REJECT
 
   iptables-save > /etc/iptables/rules.v4
 
-  echo -e "${GREEN}Matchmaking restriction ACTIVE.${NC}"
+  echo -e "${GREEN}MATCHMAKING REALMENTE BLOQUEADO.${NC}"
 }
 
 if [ "$action" == "setup" ]; then
@@ -125,11 +113,13 @@ if [ "$action" == "setup" ]; then
 
 elif [ "$action" == "stop" ]; then
   reject=$(<reject.rule)
+  sudo iptables -D OUTPUT  $reject
   sudo iptables -D FORWARD $reject
   echo "Restriction stopped."
 
 elif [ "$action" == "start" ]; then
   reject=$(<reject.rule)
+  sudo iptables -A OUTPUT  $reject
   sudo iptables -A FORWARD $reject
   echo "Restriction started."
 
