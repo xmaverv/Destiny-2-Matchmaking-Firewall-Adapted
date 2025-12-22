@@ -115,7 +115,10 @@ setup () {
     echo -e "${RED}Press any key to stop sniffing. DO NOT CTRL C${NC}"
     sleep 1
     if [ $platform == "SDR" ]; then
-      ngrep -l -q -W byline -d $INTERFACE "SDR-4" udp | grep --line-buffered -o -P 'SDR-4 awk '{print $1}'' | tee -a /tmp/data.txt &
+    ngrep -q -W byline -d $INTERFACE 'SDR-4' udp portrange 27020-27050 \
+    | grep --line-buffered -oP '(?<=IP )([0-9]{1,3}\.){3}[0-9]{1,3}' \
+    | grep -v "$(ip -4 addr show $INTERFACE | grep -oP '(?<=inet\s)\d+(\.\d+){3}')" \
+    | sort -u | tee -a /tmp/data.txt &
     elif [ $platform == "xbox" ]; then
       ngrep -l -q -W byline -d $INTERFACE "xboxpwid:" udp | grep --line-buffered -o -P 'xboxpwid:[A-F0-9]{24}\K[A-F0-9]{8}' | tee -a /tmp/data.txt &
     elif [ $platform == "steam" ]; then
