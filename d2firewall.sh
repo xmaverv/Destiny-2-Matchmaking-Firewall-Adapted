@@ -1,158 +1,120 @@
 #!/bin/bash
 # Destiny 2 Matchmaking Firewall
-# Original credits: @BasRaayman / @inchenzo
-# Steam IP adaptation: updated
+# FINAL VERSION
+# Steam: UDP ports
+# PSN/Xbox: payload string
 
 INTERFACE="tun0"
 DEFAULT_NET="10.8.0.0/24"
 
-# Steam Datagram Relay IP ranges (matchmaking)
-STEAM_IP_RANGES=(
-  "155.133.0.0/16"
-  "162.254.192.0/18"
-  "185.25.182.0/24"
-)
-
 RED='\033[0;31m'
 GREEN='\033[0;32m'
-BLUE='\033[0;34m'
 NC='\033[0m'
 
 while getopts "a:" opt; do
   case $opt in
     a) action=$OPTARG ;;
-    *) echo 'Not a valid command' >&2; exit 1 ;;
+    *) echo "Invalid option"; exit 1 ;;
   esac
 done
 
 reset_ip_tables () {
-  sudo service iptables restart
   sudo iptables -P INPUT ACCEPT
   sudo iptables -P FORWARD ACCEPT
   sudo iptables -P OUTPUT ACCEPT
   sudo iptables -F
   sudo iptables -X
 
-  if ip a | grep -q "tun0"; then
-    sudo iptables -t nat -A POSTROUTING -s 10.8.0.0/24 -o eth0 -j MASQUERADE
-    sudo iptables -A INPUT -p udp --dport 1194 -j ACCEPT
+  if ip a | grep -q "$INTERFACE"; then
+    sudo iptables -t nat -A POSTROUTING -s $DEFAULT_NET -o eth0 -j MASQUERADE
     sudo iptables -A FORWARD -m state --state RELATED,ESTABLISHED -j ACCEPT
-    sudo iptables -A FORWARD -s 10.8.0.0/24 -j ACCEPT
+    sudo iptables -A FORWARD -s $DEFAULT_NET -j ACCEPT
   fi
 }
 
 get_platform_match_str () {
-  local val=""
   if [ "$1" == "psn" ]; then
-    val="psn-4"
+    echo "psn-4"
   elif [ "$1" == "xbox" ]; then
-    val="xboxpwid:"
+    echo "xboxpwid:"
+  else
+    echo ""
   fi
-  echo $val
-}
-
-install_dependencies () {
-  sudo sysctl -w net.ipv4.ip_forward=1 > /dev/null
-  sudo ufw disable > /dev/null
-  sudo apt-get update > /dev/null
-  sudo DEBIAN_FRONTEND=noninteractive apt-get -y -q install iptables iptables-persistent ngrep > /dev/null
 }
 
 setup () {
-  echo "Setting up firewall rules."
+  echo -e "${RED}Setting up firewall rules...${NC}"
   reset_ip_tables
 
-  read -p "Enter your platform xbox, psn, steam: " platform
-  platform=$(echo "$platform" | xargs)
-  platform=${platform:-"psn"}
+  read -p "Platform (steam / psn / xbox): " platform
+  platform=${platform:-steam}
 
-  read -p "Enter your network/netmask: " net
-  net=$(echo "$net" | xargs)
-  net=${net:-$DEFAULT_NET}
-
-  echo "$platform" > /tmp/data.txt
-  echo "$net" >> /tmp/data.txt
-  echo "n" >> /tmp/data.txt
-  echo "0" >> /tmp/data.txt
+  echo "$platform" > data.txt
+  echo "$DEFAULT_NET" >> data.txt
 
   if [ "$platform" == "steam" ]; then
-    echo "# Steam IP reject rules" > reject.rule
-    for ip in "${STEAM_IP_RANGES[@]}"; do
-      sudo iptables -I FORWARD -p udp -d $ip -j REJECT
-      echo "-p udp -d $ip -j REJECT" >> reject.rule
-    done
+    echo "# Steam UDP port rules" > reject.rule
+
+    sudo iptables -I FORWARD -p udp --dport 27000:27200 -j REJECT
+    sudo iptables -I FORWARD -p udp --dport 3074 -j REJECT
+
+    echo "-p udp --dport 27000:27200 -j REJECT" >> reject.rule
+    echo "-p udp --dport 3074 -j REJECT" >> reject.rule
+
   else
     reject_str=$(get_platform_match_str $platform)
     echo "-m string --string $reject_str --algo bm -j REJECT" > reject.rule
-    sudo iptables -I FORWARD -m string --string $reject_str --algo bm -j REJECT
+    sudo iptables -I FORWARD -m string --string "$reject_str" --algo bm -j REJECT
+
+    read -p "How many accounts? " snum
+    echo "$snum" >> data.txt
 
     ids=()
-    read -p "How many accounts are you using? " snum
-    echo "$snum" >> /tmp/data.txt
-
     for ((i=1;i<=snum;i++)); do
-      read -p "Enter the sniffed ID for Account $i: " sid
-      sid=$(echo "$sid" | xargs)
-      echo "$sid" >> /tmp/data.txt
+      read -p "Enter ID for Account $i: " sid
+      echo "$sid" >> data.txt
       ids+=( "system$i;$sid" )
     done
 
-    n=${#ids[*]}
-    INDEX=1
-    for (( i = n-1; i >= 0; i-- )); do
-      elem=${ids[i]}
-      offset=$((n - 2))
-      if [ $INDEX -gt $offset ]; then
-        inet=$net
-      else
-        inet="0.0.0.0/0"
-      fi
-      IFS=';' read -r -a id <<< "$elem"
-      sudo iptables -N "${id[0]}"
-      sudo iptables -I FORWARD -s $inet -p udp -m string --string "${id[1]}" --algo bm -j "${id[0]}"
-      ((INDEX++))
+    for entry in "${ids[@]}"; do
+      IFS=';' read chain id <<< "$entry"
+      sudo iptables -N "$chain"
+      sudo iptables -I FORWARD -s $DEFAULT_NET -p udp -m string --string "$id" --algo bm -j "$chain"
     done
 
-    INDEX1=1
-    for i in "${ids[@]}"; do
-      IFS=';' read -r -a id <<< "$i"
-      INDEX2=1
-      for j in "${ids[@]}"; do
-        if [ "$i" != "$j" ]; then
-          inet="0.0.0.0/0"
-          IFS=';' read -r -a idx <<< "$j"
-          sudo iptables -A "${id[0]}" -s $inet -p udp -m string --string "${idx[1]}" --algo bm -j ACCEPT
+    for src in "${ids[@]}"; do
+      IFS=';' read chain id <<< "$src"
+      for dst in "${ids[@]}"; do
+        IFS=';' read _ did <<< "$dst"
+        if [ "$id" != "$did" ]; then
+          sudo iptables -A "$chain" -p udp -m string --string "$did" --algo bm -j ACCEPT
         fi
-        ((INDEX2++))
       done
-      ((INDEX1++))
     done
   fi
 
-  mv /tmp/data.txt ./data.txt
-  iptables-save > /etc/iptables/rules.v4
-  echo -e "${GREEN}Setup complete. Matchmaking firewall active.${NC}"
+  sudo iptables-save > /etc/iptables/rules.v4
+  echo -e "${GREEN}Setup complete. Firewall ACTIVE.${NC}"
 }
 
-if [ "$action" == "setup" ]; then
-  if ! command -v ngrep &> /dev/null; then
-    install_dependencies
-  fi
-  setup
-
-elif [ "$action" == "stop" ]; then
-  echo "Matchmaking is no longer being restricted."
-  while read rule; do
-    sudo iptables -D FORWARD $rule
-  done < reject.rule
-
-elif [ "$action" == "start" ]; then
-  echo "Matchmaking is now being restricted."
+start_fw () {
+  echo "Enabling matchmaking block..."
   while read rule; do
     sudo iptables -I FORWARD $rule
   done < reject.rule
+}
 
-elif [ "$action" == "reset" ]; then
-  echo "Erasing all firewall rules."
-  reset_ip_tables
-fi
+stop_fw () {
+  echo "Disabling matchmaking block..."
+  while read rule; do
+    sudo iptables -D FORWARD $rule 2>/dev/null
+  done < reject.rule
+}
+
+case "$action" in
+  setup) setup ;;
+  start) start_fw ;;
+  stop) stop_fw ;;
+  reset) reset_ip_tables ;;
+  *) echo "Usage: $0 -a setup|start|stop|reset" ;;
+esac
