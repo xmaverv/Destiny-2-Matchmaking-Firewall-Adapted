@@ -1,7 +1,7 @@
 #!/bin/bash
 # Destiny 2 Matchmaking Firewall
-# FINAL VERSION
-# Steam: UDP ports
+# FINAL v2 – STABLE
+# Steam: UDP 27000–27200 ONLY (no 3074)
 # PSN/Xbox: payload string
 
 INTERFACE="tun0"
@@ -14,7 +14,7 @@ NC='\033[0m'
 while getopts "a:" opt; do
   case $opt in
     a) action=$OPTARG ;;
-    *) echo "Invalid option"; exit 1 ;;
+    *) echo "Usage: $0 -a setup|start|stop|reset"; exit 1 ;;
   esac
 done
 
@@ -33,13 +33,11 @@ reset_ip_tables () {
 }
 
 get_platform_match_str () {
-  if [ "$1" == "psn" ]; then
-    echo "psn-4"
-  elif [ "$1" == "xbox" ]; then
-    echo "xboxpwid:"
-  else
-    echo ""
-  fi
+  case "$1" in
+    psn)  echo "psn-4" ;;
+    xbox) echo "xboxpwid:" ;;
+    *)    echo "" ;;
+  esac
 }
 
 setup () {
@@ -53,16 +51,14 @@ setup () {
   echo "$DEFAULT_NET" >> data.txt
 
   if [ "$platform" == "steam" ]; then
-    echo "# Steam UDP port rules" > reject.rule
+    echo "# Steam matchmaking block (UDP ports)" > reject.rule
 
     sudo iptables -I FORWARD -p udp --dport 27000:27200 -j REJECT
-    sudo iptables -I FORWARD -p udp --dport 3074 -j REJECT
-
     echo "-p udp --dport 27000:27200 -j REJECT" >> reject.rule
-    echo "-p udp --dport 3074 -j REJECT" >> reject.rule
 
   else
-    reject_str=$(get_platform_match_str $platform)
+    reject_str=$(get_platform_match_str "$platform")
+
     echo "-m string --string $reject_str --algo bm -j REJECT" > reject.rule
     sudo iptables -I FORWARD -m string --string "$reject_str" --algo bm -j REJECT
 
@@ -114,7 +110,7 @@ stop_fw () {
 case "$action" in
   setup) setup ;;
   start) start_fw ;;
-  stop) stop_fw ;;
+  stop)  stop_fw ;;
   reset) reset_ip_tables ;;
   *) echo "Usage: $0 -a setup|start|stop|reset" ;;
 esac
