@@ -144,7 +144,7 @@ fi
 
         if [ "$dt" -le 2 ]; then
   echo -e "${GREEN}[AUTO] 2 valid IDs detected. Confirming...${NC}"
-  sleep 3
+  sleep 5
   echo -e "${GREEN}[AUTO] Lobby isolated successfully.${NC}"
   pkill -15 ngrep
   exit 0
@@ -163,7 +163,7 @@ fi
 
         if [ "$dt" -le 3 ]; then
   echo -e "${GREEN}[AUTO] 3 valid IDs detected. Confirming...${NC}"
-  sleep 3
+  sleep 5
   echo -e "${GREEN}[AUTO] Lobby isolated successfully.${NC}"
   pkill -15 ngrep
   exit 0
