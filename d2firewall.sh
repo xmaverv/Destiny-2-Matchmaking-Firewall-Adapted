@@ -331,7 +331,8 @@ elif [ "$action" == "list" ]; then
 elif [ "$action" == "addsteam" ]; then
   add_cross_platform_id "steam"
 elif [ "$action" == "sniffall" ]; then
-  
+  bash d2firewall.sh -a stop
+
   echo -e "${RED}Sniffing PSN + Xbox + Steam at the same time."
   echo -e "Press any key to stop sniffing. DO NOT CTRL+C${NC}"
 
