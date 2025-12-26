@@ -201,7 +201,10 @@ break
           continue 2
         fi
       fi
-    done
+    done < <(
+      ngrep -l -q -W byline -d $INTERFACE "psn-" udp |
+      grep --line-buffered -o -P 'psn-4[0]{8}\K[A-F0-9]{7}'
+    )
   done
   pkill -15 ngrep 2>/dev/null
 
