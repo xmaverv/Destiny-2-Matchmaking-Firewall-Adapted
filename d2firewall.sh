@@ -94,7 +94,7 @@ auto_trials () {
     return 1
   }
 
-  echo -e "${BLUE}[AUTO] Fast matchmaking automation started${NC}"
+  echo -e "${BLUE}[AUTO] Fast matchmaking automation (2 or 3 IDs)${NC}"
 
   while true; do
     bash d2firewall.sh -a start
@@ -122,7 +122,7 @@ auto_trials () {
       if [[ ! " ${FOUND_IDS[*]} " =~ " $id " ]]; then
         FOUND_IDS+=("$id")
         FOUND_TIMES+=("$ts")
-        echo -e "${GREEN}[AUTO] Detected valid ID: $id${NC}"
+        echo -e "${GREEN}[AUTO] Valid ID detected (${#FOUND_IDS[@]}): $id${NC}"
       fi
 
       # apenas 1 ID → reset rápido
@@ -135,16 +135,33 @@ auto_trials () {
         continue 2
       fi
 
-      # duas IDs detectadas
+      # 2 IDs → sucesso se <= 1s
       if [ "${#FOUND_IDS[@]}" -eq 2 ]; then
         dt=$(( FOUND_TIMES[1] - FOUND_TIMES[0] ))
 
         if [ "$dt" -le 1 ]; then
-          echo -e "${GREEN}[AUTO] Two valid IDs detected within 1s. Lobby isolated.${NC}"
+          echo -e "${GREEN}[AUTO] 2 valid IDs detected within ${dt}s. Lobby isolated.${NC}"
           pkill -15 ngrep
           exit 0
         else
-          echo -e "${RED}[AUTO] IDs too far apart. Resetting.${NC}"
+          echo -e "${RED}[AUTO] 2 IDs too slow. Resetting.${NC}"
+          pkill -15 ngrep
+          bash d2firewall.sh -a reset
+          sleep 1
+          continue 2
+        fi
+      fi
+
+      # 3 IDs → sucesso se <= 2s
+      if [ "${#FOUND_IDS[@]}" -eq 3 ]; then
+        dt=$(( FOUND_TIMES[2] - FOUND_TIMES[0] ))
+
+        if [ "$dt" -le 2 ]; then
+          echo -e "${GREEN}[AUTO] 3 valid IDs detected within ${dt}s. Lobby isolated.${NC}"
+          pkill -15 ngrep
+          exit 0
+        else
+          echo -e "${RED}[AUTO] 3 IDs too slow. Resetting.${NC}"
           pkill -15 ngrep
           bash d2firewall.sh -a reset
           sleep 1
