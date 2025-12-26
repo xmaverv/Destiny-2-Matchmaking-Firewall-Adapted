@@ -50,15 +50,17 @@ setup () {
 start_fw () {
   echo "Enabling matchmaking block..."
   while read rule; do
-    sudo iptables -I FORWARD $rule
-  done < reject.rule
+  [[ "$rule" =~ ^#|^$ ]] && continue
+  sudo iptables -I FORWARD $rule
+done < reject.rule
 }
 
 stop_fw () {
   echo "Disabling matchmaking block..."
   while read rule; do
-    sudo iptables -D FORWARD $rule 2>/dev/null
-  done < reject.rule
+  [[ "$rule" =~ ^#|^$ ]] && continue
+  sudo iptables -D FORWARD $rule 2>/dev/null
+done < reject.rule
 }
 
 case "$action" in
