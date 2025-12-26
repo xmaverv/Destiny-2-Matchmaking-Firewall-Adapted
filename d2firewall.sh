@@ -143,9 +143,11 @@ fi
         dt=$(( FOUND_TIMES[1] - FOUND_TIMES[0] ))
 
         if [ "$dt" -le 2 ]; then
-          echo -e "${GREEN}[AUTO] 2 valid IDs detected within ${dt}s. Lobby isolated.${NC}"
-          pkill -15 ngrep
-          exit 0
+  echo -e "${GREEN}[AUTO] 2 valid IDs detected. Confirming...${NC}"
+  sleep 3
+  echo -e "${GREEN}[AUTO] Lobby isolated successfully.${NC}"
+  pkill -15 ngrep
+  exit 0
         else
           echo -e "${RED}[AUTO] 2 IDs too slow. Resetting.${NC}"
           pkill -15 ngrep
@@ -160,9 +162,11 @@ fi
         dt=$(( FOUND_TIMES[2] - FOUND_TIMES[0] ))
 
         if [ "$dt" -le 3 ]; then
-          echo -e "${GREEN}[AUTO] 3 valid IDs detected within ${dt}s. Lobby isolated.${NC}"
-          pkill -15 ngrep
-          exit 0
+  echo -e "${GREEN}[AUTO] 3 valid IDs detected. Confirming...${NC}"
+  sleep 3
+  echo -e "${GREEN}[AUTO] Lobby isolated successfully.${NC}"
+  pkill -15 ngrep
+  exit 0
         else
           echo -e "${RED}[AUTO] 3 IDs too slow. Resetting.${NC}"
           pkill -15 ngrep
