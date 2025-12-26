@@ -6,8 +6,10 @@ OBS_WINDOW=30     # segundos
 SLEEP_BETWEEN=10  # segundos
 
 MEUS_IDS=(
-  "psn-400000000AAAAAAA"
-  "psn-400000000BBBBBBB"
+  "psn-400000000686815A"
+  "psn-4000000006810123"
+  "psn-4000000006B0EC74"
+  "psn-40000000067776AC"
 )
 
 contains_my_id () {
