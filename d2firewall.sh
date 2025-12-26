@@ -152,11 +152,14 @@ fi
 sleep 5
 pkill -15 ngrep
 
-# REISOLA MATCHMAKING
+# REINSERE REJECT NO LOCAL CORRETO (CRÍTICO)
 if [ -f reject.rule ]; then
+  reject=$(<reject.rule)
+  sudo iptables -D FORWARD $reject 2>/dev/null
+
   pos=$(iptables -L FORWARD | grep "system" | wc -l)
   ((pos++))
-  sudo iptables -I FORWARD $pos $(<reject.rule)
+  sudo iptables -I FORWARD $pos $reject
 fi
 
 exit 0
@@ -178,11 +181,14 @@ exit 0
 sleep 5
 pkill -15 ngrep
 
-# REISOLA MATCHMAKING
+# REINSERE REJECT NO LOCAL CORRETO (CRÍTICO)
 if [ -f reject.rule ]; then
+  reject=$(<reject.rule)
+  sudo iptables -D FORWARD $reject 2>/dev/null
+
   pos=$(iptables -L FORWARD | grep "system" | wc -l)
   ((pos++))
-  sudo iptables -I FORWARD $pos $(<reject.rule)
+  sudo iptables -I FORWARD $pos $reject
 fi
 
 exit 0
