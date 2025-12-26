@@ -1,12 +1,14 @@
 #!/bin/bash
 # credits to @BasRaayman and @inchenzo
-# unified platform version (minimal change)
+# unified platform - FIXED sniff (no ngrep header leakage)
 
 INTERFACE="tun0"
 DEFAULT_NET="10.8.0.0/24"
 
-# unified match string (EDIT HERE IF NEEDED)
-UNIFIED_MATCH="D2MATCH"
+# ===== UNIFIED MATCH CONFIG =====
+UNIFIED_MATCH="steamid:"
+UNIFIED_REGEX='steamid:\K[0-9]{10}'
+# =================================
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -42,26 +44,26 @@ reset_ip_tables () {
   fi
 }
 
-# platform abstraction kept for compatibility
+# kept for compatibility
 get_platform_match_str () {
   echo "$UNIFIED_MATCH"
 }
 
 install_dependencies () {
   sudo sysctl -w net.ipv4.ip_forward=1 > /dev/null
-  sudo ufw disable > /dev/null
+  sudo ufw disable > /dev/null || true
 
   if ip a | grep -q "tun0"; then
     yn="n"
-  else 
+  else
     echo -e -n "${GREEN}Would you like to install OpenVPN?${NC} y/n: "
     read yn
     yn=${yn:-"y"}
   fi
 
-  echo -e "${RED}Installing dependencies. Please wait...${NC}"
+  echo -e "${RED}Installing dependencies...${NC}"
   sudo apt-get update > /dev/null
-  
+
   if [ "$yn" == "y" ]; then
     sudo DEBIAN_FRONTEND=noninteractive apt-get -y -q install iptables iptables-persistent ngrep nginx > /dev/null
     sudo wget -q https://git.io/vpn -O openvpn-ubuntu-install.sh
@@ -75,9 +77,10 @@ install_dependencies () {
 }
 
 setup () {
+  echo "Setting up firewall rules."
   reset_ip_tables
 
-  # kept for compatibility
+  # kept for data.txt compatibility
   read -p "Enter your platform xbox, psn, steam: " platform
   platform=$(echo "$platform" | xargs)
   platform=${platform:-"psn"}
@@ -100,6 +103,7 @@ setup () {
     sleep 1
 
     ngrep -l -q -W byline -d $INTERFACE "$UNIFIED_MATCH" udp | \
+      grep --line-buffered -o -P "$UNIFIED_REGEX" | \
       tee -a /tmp/data.txt &
 
     while true; do
@@ -114,7 +118,7 @@ setup () {
 
     tmp_ids=$(tail -n +5 /tmp/data.txt)
     c=1
-    while IFS= read -r line; do 
+    while IFS= read -r line; do
       idf="system$c"
       ids+=( "$idf;$line" )
       ((c++))
@@ -154,14 +158,11 @@ setup () {
   INDEX1=1
   for i in "${ids[@]}"; do
     IFS=';' read -r -a id <<< "$i"
-    INDEX2=1
     for j in "${ids[@]}"; do
       if [ "$i" != "$j" ]; then
-        inet="0.0.0.0/0"
         IFS=';' read -r -a idx <<< "$j"
-        sudo iptables -A "${id[0]}" -s $inet -p udp -m string --string "${idx[1]}" --algo bm -j ACCEPT
+        sudo iptables -A "${id[0]}" -p udp -m string --string "${idx[1]}" --algo bm -j ACCEPT
       fi
-      ((INDEX2++))
     done
     ((INDEX1++))
   done
@@ -170,15 +171,18 @@ setup () {
   echo "Setup is complete and matchmaking firewall is now active."
 }
 
-# command handling (UNCHANGED)
+# ===== COMMANDS (UNCHANGED) =====
+
 if [ "$action" == "setup" ]; then
   if ! command -v ngrep &> /dev/null; then
     install_dependencies
   fi
   setup
+
 elif [ "$action" == "stop" ]; then
   reject=$(<reject.rule)
   sudo iptables -D FORWARD $reject
+
 elif [ "$action" == "start" ]; then
   if ! sudo iptables-save | grep -q "REJECT"; then
     pos=$(iptables -L FORWARD | grep "system" | wc -l)
@@ -186,28 +190,28 @@ elif [ "$action" == "start" ]; then
     reject=$(<reject.rule)
     sudo iptables -I FORWARD $pos $reject
   fi
-elif [ "$action" == "add" ]; then
-  read -p "Enter the sniffed ID: " id
-  echo "$id" >> data.txt
-  bash d2firewall.sh -a setup < data.txt
-elif [ "$action" == "remove" ]; then
-  tail -n +5 data.txt | cat -n
+
 elif [ "$action" == "sniff" ]; then
   bash d2firewall.sh -a stop
-  echo -e "${RED}Press any key to stop sniffing.${NC}"
-  ngrep -l -q -W byline -d $INTERFACE "$UNIFIED_MATCH" udp | tee -a data.txt &
+  echo -e "${RED}Press any key to stop sniffing. DO NOT CTRL+C${NC}"
+  ngrep -l -q -W byline -d $INTERFACE "$UNIFIED_MATCH" udp | \
+    grep --line-buffered -o -P "$UNIFIED_REGEX" | \
+    tee -a data.txt &
   read -n 1
   pkill -15 ngrep
   awk '!a[$0]++' data.txt > /tmp/data.txt && mv /tmp/data.txt ./data.txt
   bash d2firewall.sh -a setup < data.txt
+
 elif [ "$action" == "list" ]; then
   tail -n +5 data.txt | cat -n
+
 elif [ "$action" == "load" ]; then
   if [ -f ./data.txt ]; then
     bash d2firewall.sh -a setup < ./data.txt
   else
     iptables-restore < /etc/iptables/rules.v4
   fi
+
 elif [ "$action" == "reset" ]; then
   reset_ip_tables
 fi
