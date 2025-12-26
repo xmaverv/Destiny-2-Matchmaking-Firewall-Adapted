@@ -98,6 +98,11 @@ auto_trials () {
 
   while true; do
     bash d2firewall.sh -a start
+     # TEMPORARIAMENTE libera matchmaking (remove REJECT)
+    if [ -f reject.rule ]; then
+      reject=$(<reject.rule)
+      sudo iptables -D FORWARD $reject 2>/dev/null
+    fi
 
     FOUND_IDS=()
     FOUND_TIMES=()
@@ -144,10 +149,17 @@ fi
 
         if [ "$dt" -le 2 ]; then
   echo -e "${GREEN}[AUTO] 2 valid IDs detected. Confirming...${NC}"
-  sleep 7
-  echo -e "${GREEN}[AUTO] Lobby isolated successfully.${NC}"
-  pkill -15 ngrep
-  exit 0
+sleep 5
+pkill -15 ngrep
+
+# REISOLA MATCHMAKING
+if [ -f reject.rule ]; then
+  pos=$(iptables -L FORWARD | grep "system" | wc -l)
+  ((pos++))
+  sudo iptables -I FORWARD $pos $(<reject.rule)
+fi
+
+exit 0
         else
           echo -e "${RED}[AUTO] 2 IDs too slow. Resetting.${NC}"
           pkill -15 ngrep
@@ -163,10 +175,17 @@ fi
 
         if [ "$dt" -le 3 ]; then
   echo -e "${GREEN}[AUTO] 3 valid IDs detected. Confirming...${NC}"
-  sleep 7
-  echo -e "${GREEN}[AUTO] Lobby isolated successfully.${NC}"
-  pkill -15 ngrep
-  exit 0
+sleep 5
+pkill -15 ngrep
+
+# REISOLA MATCHMAKING
+if [ -f reject.rule ]; then
+  pos=$(iptables -L FORWARD | grep "system" | wc -l)
+  ((pos++))
+  sudo iptables -I FORWARD $pos $(<reject.rule)
+fi
+
+exit 0
         else
           echo -e "${RED}[AUTO] 3 IDs too slow. Resetting.${NC}"
           pkill -15 ngrep
