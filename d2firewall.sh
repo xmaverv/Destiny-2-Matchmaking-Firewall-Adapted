@@ -95,26 +95,54 @@ setup () {
   ids=()
   read -p "Would you like to sniff the ID automatically?(psn/xbox/steam only) y/n: " yn
   yn=${yn:-"y"}
+  if ! [[ $platform =~ ^(psn|xbox|steam)$ ]]; then
+    yn="n"
+  fi
   echo "n" >> /tmp/data.txt
 
-  if [ "$yn" != "y" ]; then
-    read -p "How many accounts are you using for this? " snum
-    echo $snum >> /tmp/data.txt
+  if [ "$yn" == "y" ]; then
 
-    for ((i=0;i<snum;i++)); do
+    echo -e "${RED}Press any key to stop sniffing. DO NOT CTRL C${NC}"
+    sleep 1
+    if [ $platform == "psn" ]; then
+      ngrep -l -q -W byline -d $INTERFACE "psn-4" udp | grep --line-buffered -o -P 'psn-4[0]{8}\K[A-F0-9]{7}' | tee -a /tmp/data.txt &
+    elif [ $platform == "xbox" ]; then
+      ngrep -l -q -W byline -d $INTERFACE "xboxpwid:" udp | grep --line-buffered -o -P 'xboxpwid:[A-F0-9]{24}\K[A-F0-9]{8}' | tee -a /tmp/data.txt &
+    elif [ $platform == "steam" ]; then
+      ngrep -l -q -W byline -d $INTERFACE "steamid:" udp | grep --line-buffered -o -P 'steamid:[0-9]{7}\K[0-9]{10}' | tee -a /tmp/data.txt &
+    fi
+
+    while [ true ] ; do
+      read -t 1 -n 1
+      if [ $? = 0 ] ; then
+        break
+      fi
+    done
+    pkill -15 ngrep
+
+    awk '!a[$0]++' /tmp/data.txt > /tmp/temp.txt && mv /tmp/temp.txt /tmp/data.txt
+    snum=$(tail -n +4 /tmp/data.txt | wc -l)
+    awk "NR==4{print $snum}1" /tmp/data.txt > /tmp/temp.txt && mv /tmp/temp.txt /tmp/data.txt
+
+    tmp_ids=$(tail -n +5 /tmp/data.txt)
+    c=1
+    while IFS= read -r line; do 
+      idf="system$c"
+      ids+=( "$idf;$line" )
+      ((c++))
+    done <<< "$tmp_ids"
+
+  else
+    read -p "How many accounts are you using for this? " snum
+    if [ $snum -lt 1 ]; then exit 1; fi
+    echo $snum >> /tmp/data.txt
+    for ((i=0;i<snum;i++)); do 
       num=$((i+1))
       idf="system$num"
       read -p "Enter the sniffed ID for Account $num: " sid
       sid=$(echo "$sid" | xargs)
-
-      if [[ ${#sid} -gt 7 ]]; then
-        sid_short="${sid: -7}"
-      else
-        sid_short="$sid"
-      fi
-
-      echo "$sid" >> /tmp/data.txt
-      ids+=( "$idf;$sid;$sid_short" )
+      echo $sid >> /tmp/data.txt
+      ids+=( "$idf;$sid" )
     done
   fi
 
@@ -128,31 +156,48 @@ setup () {
   for (( i = n-1; i >= 0; i-- )); do
     elem=${ids[i]}
     offset=$((n - 2))
-    if [ $INDEX -gt $offset ]; then inet=$net; else inet="0.0.0.0/0"; fi
+    if [ $INDEX -gt $offset ]; then
+      inet=$net
+    else
+      inet="0.0.0.0/0"
+    fi
 
     IFS=';' read -r -a id <<< "$elem"
-    if [ ${#id[@]} -eq 2 ]; then id[2]="${id[1]}"; fi
-
     sudo iptables -N "${id[0]}"
     sudo iptables -I FORWARD -s $inet -p udp -m string --string "${id[1]}" --algo bm -j "${id[0]}"
-    sudo iptables -I FORWARD -s $inet -p udp -m string --string "${id[2]}" --algo bm -j "${id[0]}"
+
+    # ADD: support full PSN ID by also matching last 7 chars
+    if [[ ${#id[1]} -gt 7 ]]; then
+      short_id="${id[1]: -7}"
+      sudo iptables -I FORWARD -s $inet -p udp -m string --string "$short_id" --algo bm -j "${id[0]}"
+    fi
+
     ((INDEX++))
   done
-
+  
   INDEX1=1
   for i in "${ids[@]}"; do
     IFS=';' read -r -a id <<< "$i"
-    if [ ${#id[@]} -eq 2 ]; then id[2]="${id[1]}"; fi
-
     INDEX2=1
     for j in "${ids[@]}"; do
       if [ "$i" != "$j" ]; then
-        inet=$net
+        if [[ $INDEX1 -eq 1 && $INDEX2 -eq 2 ]]; then
+          inet=$net
+        elif [[ $INDEX1 -eq 2 && $INDEX2 -eq 1 ]]; then
+          inet=$net
+        elif [[ $INDEX1 -gt 2 && $INDEX2 -lt 3 ]]; then
+          inet=$net
+        else
+          inet="0.0.0.0/0"
+        fi
         IFS=';' read -r -a idx <<< "$j"
-        if [ ${#idx[@]} -eq 2 ]; then idx[2]="${idx[1]}"; fi
-
         sudo iptables -A "${id[0]}" -s $inet -p udp -m string --string "${idx[1]}" --algo bm -j ACCEPT
-        sudo iptables -A "${id[0]}" -s $inet -p udp -m string --string "${idx[2]}" --algo bm -j ACCEPT
+
+        # ADD: support full PSN ID
+        if [[ ${#idx[1]} -gt 7 ]]; then
+          short_id="${idx[1]: -7}"
+          sudo iptables -A "${id[0]}" -s $inet -p udp -m string --string "$short_id" --algo bm -j ACCEPT
+        fi
       fi
       ((INDEX2++))
     done
@@ -164,6 +209,9 @@ setup () {
 }
 
 if [ "$action" == "setup" ]; then
+  if ! command -v ngrep &> /dev/null; then
+    install_dependencies
+  fi
   setup
 elif [ "$action" == "stop" ]; then
   reject=$(<reject.rule)
