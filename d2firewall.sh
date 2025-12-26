@@ -105,9 +105,9 @@ sniff_platforms () {
   for platform in psn xbox steam epic; do
     match=$(get_platform_match_str $platform)
     if [ -n "$match" ]; then
-      ngrep -l -q -W byline -d $INTERFACE "$match" udp | \
-        grep --line-buffered "$match" | \
-        sed "s/^/[$(date '+%F %T')] $platform: /" >> $LOGFILE &
+      ngrep -q -W byline -d $INTERFACE "$match" udp | \
+  grep --line-buffered "$match" | \
+  sed "s/^/[$(date '+%F %T')] $platform: /" >> $LOGFILE &
     fi
   done
 
