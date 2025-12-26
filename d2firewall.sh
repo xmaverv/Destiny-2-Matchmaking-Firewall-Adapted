@@ -131,6 +131,9 @@ SUCCESS=0
         FOUND_TIMES+=("$ts")
         echo -e "${GREEN}[AUTO] Valid ID detected (${#FOUND_IDS[@]}): $id${NC}"
       fi
+      if [ "$FIRST_ID_TIME" -eq 0 ]; then
+  FIRST_ID_TIME="$ts"
+fi
 
       # apenas 1 ID → aguarda até 2s pela segunda
 if [ "${#FOUND_IDS[@]}" -eq 1 ]; then
@@ -150,8 +153,7 @@ fi
         if [ "$dt" -le 2 ]; then
   echo -e "${GREEN}[AUTO] 2 valid IDs detected. Confirming...${NC}"
 sleep 5
-pkill -15 ngrep
-
+SUCCESS=1
 # REINSERE REJECT NO LOCAL CORRETO (CRÍTICO)
 if [ -f reject.rule ]; then
   reject=$(<reject.rule)
@@ -162,7 +164,7 @@ if [ -f reject.rule ]; then
   sudo iptables -I FORWARD $pos $reject
 fi
 
-exit 0
+break
         else
           echo -e "${RED}[AUTO] 2 IDs too slow. Resetting.${NC}"
           pkill -15 ngrep
@@ -179,8 +181,7 @@ exit 0
         if [ "$dt" -le 3 ]; then
   echo -e "${GREEN}[AUTO] 3 valid IDs detected. Confirming...${NC}"
 sleep 5
-pkill -15 ngrep
-
+SUCCESS=1
 # REINSERE REJECT NO LOCAL CORRETO (CRÍTICO)
 if [ -f reject.rule ]; then
   reject=$(<reject.rule)
@@ -191,7 +192,7 @@ if [ -f reject.rule ]; then
   sudo iptables -I FORWARD $pos $reject
 fi
 
-exit 0
+break
         else
           echo -e "${RED}[AUTO] 3 IDs too slow. Resetting.${NC}"
           pkill -15 ngrep
@@ -202,6 +203,24 @@ exit 0
       fi
     done
   done
+  pkill -15 ngrep
+
+if [ "$SUCCESS" -eq 1 ]; then
+  echo -e "${GREEN}[AUTO] Valid fireteam detected. Confirming...${NC}"
+  sleep 3
+
+  if [ -f reject.rule ]; then
+    reject=$(<reject.rule)
+    sudo iptables -D FORWARD $reject 2>/dev/null
+
+    pos=$(iptables -L FORWARD | grep "system" | wc -l)
+    ((pos++))
+    sudo iptables -I FORWARD $pos $reject
+  fi
+
+  echo -e "${GREEN}[AUTO] Lobby isolated.${NC}"
+  exit 0
+fi
 }
 
 install_dependencies () {
