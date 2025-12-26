@@ -330,6 +330,46 @@ elif [ "$action" == "list" ]; then
 
 elif [ "$action" == "addsteam" ]; then
   add_cross_platform_id "steam"
+  elif [ "$action" == "sniffall" ]; then
+  bash d2firewall.sh -a stop
+
+  echo -e "${RED}Sniffing PSN + Xbox + Steam at the same time."
+  echo -e "Press any key to stop sniffing. DO NOT CTRL+C${NC}"
+
+  sleep 1
+
+  # PSN
+  ngrep -l -q -W byline -d $INTERFACE "psn-4" udp \
+  | grep --line-buffered -o -P 'psn-4[0]{8}\K[A-F0-9]{7}' \
+  | tee -a data.txt &
+
+  # Xbox
+  ngrep -l -q -W byline -d $INTERFACE "xboxpwid:" udp \
+  | grep --line-buffered -o -P 'xboxpwid:[A-F0-9]{24}\K[A-F0-9]{8}' \
+  | tee -a data.txt &
+
+  # Steam
+  ngrep -l -q -W byline -d $INTERFACE "steamid:" udp \
+  | grep --line-buffered -o -P 'steamid:[0-9]{7}\K[0-9]{10}' \
+  | tee -a data.txt &
+
+  while true; do
+    read -t 1 -n 1
+    if [ $? = 0 ]; then
+      break
+    fi
+  done
+
+  pkill -15 ngrep
+
+  # remove duplicates
+  awk '!a[$0]++' data.txt > /tmp/data.txt && mv /tmp/data.txt ./data.txt
+
+  # update total number of ids
+  n=$(tail -n +5 data.txt | wc -l)
+  sed -i "4c$n" data.txt
+
+  bash d2firewall.sh -a setup < data.txt
 elif [ "$action" == "update" ]; then
   wget -q https://raw.githubusercontent.com/xmaver/Destiny-2-Matchmaking-Firewall/main/d2firewall.sh -O ./d2firewall.sh
   chmod +x ./d2firewall.sh
