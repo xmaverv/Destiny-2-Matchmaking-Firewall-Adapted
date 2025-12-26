@@ -108,6 +108,8 @@ auto_trials () {
     FOUND_TIMES=()
     FIRST_ID_TIME=0
 SUCCESS=0
+SUCCESS_FILE="/tmp/autotries_success"
+rm -f "$SUCCESS_FILE"
 
     echo -e "${BLUE}[AUTO] Sniffing...${NC}"
 
@@ -153,7 +155,7 @@ fi
         if [ "$dt" -le 2 ]; then
   echo -e "${GREEN}[AUTO] 2 valid IDs detected. Confirming...${NC}"
 sleep 5
-SUCCESS=1
+echo success > "$SUCCESS_FILE"
 # REINSERE REJECT NO LOCAL CORRETO (CRÍTICO)
 if [ -f reject.rule ]; then
   reject=$(<reject.rule)
@@ -181,7 +183,7 @@ break
         if [ "$dt" -le 3 ]; then
   echo -e "${GREEN}[AUTO] 3 valid IDs detected. Confirming...${NC}"
 sleep 5
-SUCCESS=1
+echo success > "$SUCCESS_FILE"
 # REINSERE REJECT NO LOCAL CORRETO (CRÍTICO)
 if [ -f reject.rule ]; then
   reject=$(<reject.rule)
@@ -203,9 +205,9 @@ break
       fi
     done
   done
-  pkill -15 ngrep
+  pkill -15 ngrep 2>/dev/null
 
-if [ "$SUCCESS" -eq 1 ]; then
+if [ -f "$SUCCESS_FILE" ]; then
   echo -e "${GREEN}[AUTO] Valid fireteam detected. Confirming...${NC}"
   sleep 3
 
@@ -218,6 +220,7 @@ if [ "$SUCCESS" -eq 1 ]; then
     sudo iptables -I FORWARD $pos $reject
   fi
 
+  rm -f "$SUCCESS_FILE"
   echo -e "${GREEN}[AUTO] Lobby isolated.${NC}"
   exit 0
 fi
