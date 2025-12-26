@@ -125,15 +125,18 @@ auto_trials () {
         echo -e "${GREEN}[AUTO] Valid ID detected (${#FOUND_IDS[@]}): $id${NC}"
       fi
 
-      # apenas 1 ID → reset rápido
-      if [ "${#FOUND_IDS[@]}" -eq 1 ]; then
-        sleep 0.3
-        echo -e "${RED}[AUTO] Only one ID detected. Resetting.${NC}"
-        pkill -15 ngrep
-        bash d2firewall.sh -a reset
-        sleep 1
-        continue 2
-      fi
+      # apenas 1 ID → aguarda até 2s pela segunda
+if [ "${#FOUND_IDS[@]}" -eq 1 ]; then
+  dt=$(( ts - FOUND_TIMES[0] ))
+
+  if [ "$dt" -gt 2 ]; then
+    echo -e "${RED}[AUTO] Only one ID after 2s. Resetting.${NC}"
+    pkill -15 ngrep
+    bash d2firewall.sh -a reset
+    sleep 1
+    continue 2
+  fi
+fi
 
       # 2 IDs → sucesso se <= 1s
       if [ "${#FOUND_IDS[@]}" -eq 2 ]; then
