@@ -7,6 +7,8 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 NC='\033[0m'
+OBS_WINDOW=30
+SLEEP_BETWEEN=10
 
 while getopts "a:" opt; do
   case $opt in
@@ -79,6 +81,52 @@ add_cross_platform_id () {
   iptables-save > /etc/iptables/rules.v4
 
   echo "$platform ID added successfully."
+}
+auto_trials () {
+
+  MY_IDS=($(tail -n +5 data.txt))
+
+  contains_my_id () {
+    local id="$1"
+    for my in "${MY_IDS[@]}"; do
+      [[ "$id" == "$my" ]] && return 0
+    done
+    return 1
+  }
+
+  while true; do
+    echo -e "${BLUE}[AUTO] Starting matchmaking attempt...${NC}"
+
+    bash d2firewall.sh -a start
+    bash d2firewall.sh -a sniff &
+
+    SNIFF_PID=$!
+    sleep "$OBS_WINDOW"
+
+    kill "$SNIFF_PID" 2>/dev/null
+    sleep 1
+
+    external_found=0
+
+    ids_detected=$(tail -n +5 data.txt | sort -u)
+
+    for id in $ids_detected; do
+      if ! contains_my_id "$id"; then
+        echo -e "${RED}[AUTO] External ID detected: $id${NC}"
+        external_found=1
+        break
+      fi
+    done
+
+    if [ "$external_found" -eq 0 ]; then
+      echo -e "${GREEN}[AUTO] Lobby isolated successfully.${NC}"
+      exit 0
+    fi
+
+    echo -e "${RED}[AUTO] Resetting firewall and retrying...${NC}"
+    bash d2firewall.sh -a reset
+    sleep "$SLEEP_BETWEEN"
+  done
 }
 install_dependencies () {
   sudo sysctl -w net.ipv4.ip_forward=1 > /dev/null
@@ -370,6 +418,8 @@ elif [ "$action" == "sniffall" ]; then
   sed -i "4c$n" data.txt
 
   bash d2firewall.sh -a setup < data.txt
+  elif [ "$action" == "autotries" ]; then
+  auto_trials
 elif [ "$action" == "update" ]; then
   wget -q https://raw.githubusercontent.com/xmaver/Destiny-2-Matchmaking-Firewall/main/d2firewall.sh -O ./d2firewall.sh
   chmod +x ./d2firewall.sh
