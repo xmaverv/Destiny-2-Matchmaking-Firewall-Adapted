@@ -139,7 +139,7 @@ auto_trials () {
       if [ "${#FOUND_IDS[@]}" -eq 2 ]; then
         dt=$(( FOUND_TIMES[1] - FOUND_TIMES[0] ))
 
-        if [ "$dt" -le 1 ]; then
+        if [ "$dt" -le 2 ]; then
           echo -e "${GREEN}[AUTO] 2 valid IDs detected within ${dt}s. Lobby isolated.${NC}"
           pkill -15 ngrep
           exit 0
@@ -156,7 +156,7 @@ auto_trials () {
       if [ "${#FOUND_IDS[@]}" -eq 3 ]; then
         dt=$(( FOUND_TIMES[2] - FOUND_TIMES[0] ))
 
-        if [ "$dt" -le 2 ]; then
+        if [ "$dt" -le 3 ]; then
           echo -e "${GREEN}[AUTO] 3 valid IDs detected within ${dt}s. Lobby isolated.${NC}"
           pkill -15 ngrep
           exit 0
