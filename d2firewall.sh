@@ -94,40 +94,67 @@ auto_trials () {
     return 1
   }
 
+  echo -e "${BLUE}[AUTO] Fast matchmaking automation started${NC}"
+
   while true; do
-    echo -e "${BLUE}[AUTO] Starting matchmaking attempt...${NC}"
-
     bash d2firewall.sh -a start
-    bash d2firewall.sh -a sniff &
 
-    SNIFF_PID=$!
-    sleep "$OBS_WINDOW"
+    FOUND_IDS=()
+    FOUND_TIMES=()
 
-    kill "$SNIFF_PID" 2>/dev/null
-    sleep 1
+    echo -e "${BLUE}[AUTO] Sniffing...${NC}"
 
-    external_found=0
+    ngrep -l -q -W byline -d $INTERFACE "psn-" udp | \
+    grep --line-buffered -o -P 'psn-[0-9A-Za-z]+' | \
+    while read id; do
+      ts=$(date +%s)
 
-    ids_detected=$(tail -n +5 data.txt | sort -u)
-
-    for id in $ids_detected; do
+      # ID externa → reset imediato
       if ! contains_my_id "$id"; then
         echo -e "${RED}[AUTO] External ID detected: $id${NC}"
-        external_found=1
-        break
+        pkill -15 ngrep
+        bash d2firewall.sh -a reset
+        sleep 1
+        continue 2
+      fi
+
+      # adiciona se ainda não existir
+      if [[ ! " ${FOUND_IDS[*]} " =~ " $id " ]]; then
+        FOUND_IDS+=("$id")
+        FOUND_TIMES+=("$ts")
+        echo -e "${GREEN}[AUTO] Detected valid ID: $id${NC}"
+      fi
+
+      # apenas 1 ID → reset rápido
+      if [ "${#FOUND_IDS[@]}" -eq 1 ]; then
+        sleep 0.3
+        echo -e "${RED}[AUTO] Only one ID detected. Resetting.${NC}"
+        pkill -15 ngrep
+        bash d2firewall.sh -a reset
+        sleep 1
+        continue 2
+      fi
+
+      # duas IDs detectadas
+      if [ "${#FOUND_IDS[@]}" -eq 2 ]; then
+        dt=$(( FOUND_TIMES[1] - FOUND_TIMES[0] ))
+
+        if [ "$dt" -le 1 ]; then
+          echo -e "${GREEN}[AUTO] Two valid IDs detected within 1s. Lobby isolated.${NC}"
+          pkill -15 ngrep
+          exit 0
+        else
+          echo -e "${RED}[AUTO] IDs too far apart. Resetting.${NC}"
+          pkill -15 ngrep
+          bash d2firewall.sh -a reset
+          sleep 1
+          continue 2
+        fi
       fi
     done
-
-    if [ "$external_found" -eq 0 ]; then
-      echo -e "${GREEN}[AUTO] Lobby isolated successfully.${NC}"
-      exit 0
-    fi
-
-    echo -e "${RED}[AUTO] Resetting firewall and retrying...${NC}"
-    bash d2firewall.sh -a reset
-    sleep "$SLEEP_BETWEEN"
   done
 }
+
 install_dependencies () {
   sudo sysctl -w net.ipv4.ip_forward=1 > /dev/null
   sudo ufw disable > /dev/null
