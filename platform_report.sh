@@ -1,6 +1,7 @@
 #!/bin/bash
 # Platform Log Reporter
 # Generates report by IP, platform and time window
+# Optional filters: --psn --xbox --steam --epic
 
 LOGFILE="platform.log"
 
@@ -9,13 +10,42 @@ if [ ! -f "$LOGFILE" ]; then
   exit 1
 fi
 
+# -------------------------
+# PLATFORM FILTER PARSING
+# -------------------------
+FILTERS=()
+
+for arg in "$@"; do
+  case "$arg" in
+    --psn)   FILTERS+=("psn") ;;
+    --xbox)  FILTERS+=("xbox") ;;
+    --steam) FILTERS+=("steam") ;;
+    --epic)  FILTERS+=("epic") ;;
+    *)
+      echo "Unknown option: $arg"
+      echo "Usage: $0 [--psn] [--xbox] [--steam] [--epic]"
+      exit 1
+      ;;
+  esac
+done
+
+# Build regex for awk (if filters exist)
+if [ ${#FILTERS[@]} -gt 0 ]; then
+  PLATFORM_REGEX=$(IFS="|"; echo "${FILTERS[*]}")
+else
+  PLATFORM_REGEX=".*"
+fi
+
 echo "=============================="
 echo " Platform Traffic Report"
 echo " Generated: $(date)"
+if [ "$PLATFORM_REGEX" != ".*" ]; then
+  echo " Filter: $PLATFORM_REGEX"
+fi
 echo "=============================="
 echo
 
-awk '
+awk -v platform_regex="$PLATFORM_REGEX" '
 {
   # Extract timestamp
   match($0, /\[([0-9\-]+ [0-9:]+)\]/, t)
@@ -24,6 +54,10 @@ awk '
   # Extract platform
   match($0, /\] ([a-z]+):/, p)
   platform = p[1]
+
+  if (platform !~ platform_regex) {
+    next
+  }
 
   # Extract IP
   match($0, /([0-9]{1,3}(\.[0-9]{1,3}){3})/, i)
