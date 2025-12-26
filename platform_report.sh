@@ -47,11 +47,9 @@ echo
 
 awk -v platform_regex="$PLATFORM_REGEX" '
 {
-  # Extract timestamp
   match($0, /\[([0-9\-]+ [0-9:]+)\]/, t)
   time = t[1]
 
-  # Extract platform
   match($0, /\] ([a-z]+):/, p)
   platform = p[1]
 
@@ -59,9 +57,14 @@ awk -v platform_regex="$PLATFORM_REGEX" '
     next
   }
 
-  # Extract IP
-  match($0, /([0-9]{1,3}(\.[0-9]{1,3}){3})/, i)
-  ip = i[1]
+  # Extract IP (prefer destination IP)
+  if (match($0, /-> ([0-9]{1,3}(\.[0-9]{1,3}){3})/, i)) {
+    ip = i[1]
+  } else if (match($0, /([0-9]{1,3}(\.[0-9]{1,3}){3})/, i)) {
+    ip = i[1]
+  } else {
+    next
+  }
 
   key = platform "|" ip
 
