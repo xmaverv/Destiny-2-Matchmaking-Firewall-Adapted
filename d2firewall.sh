@@ -105,7 +105,7 @@ auto_trials () {
     echo -e "${BLUE}[AUTO] Sniffing...${NC}"
 
     ngrep -l -q -W byline -d $INTERFACE "psn-" udp | \
-    grep --line-buffered -o -P 'psn-[0-9A-Za-z]+' | \
+    grep --line-buffered -o -P 'psn-4[0]{8}\K[A-F0-9]{7}' | \
     while read id; do
       ts=$(date +%s)
 
