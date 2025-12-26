@@ -60,7 +60,6 @@ install_dependencies () {
     yn=${yn:-"y"}
   fi
 
-  echo -e "${RED}Installing dependencies. Please wait while it finishes...${NC}"
   sudo apt-get update > /dev/null
   
   if [ "$yn" == "y" ]; then
@@ -70,157 +69,150 @@ install_dependencies () {
     (APPROVE_INSTALL=y APPROVE_IP=y IPV6_SUPPORT=n PORT_CHOICE=1 PROTOCOL_CHOICE=1 DNS=1 COMPRESSION_ENABLED=n CUSTOMIZE_ENC=n CLIENT=client PASS=1 ./openvpn-ubuntu-install.sh) &
     wait;
     sudo cp /root/client.ovpn /var/www/html/client.ovpn
-    ip=$(dig +short myip.opendns.com @resolver1.opendns.com)
-    echo -e "${GREEN}You can download the openvpn config from ${BLUE}http://$ip/client.ovpn${NC}"
   else
     sudo DEBIAN_FRONTEND=noninteractive apt-get -y -q install iptables iptables-persistent ngrep > /dev/null
   fi
 }
 
 setup () {
-  reset_ip_tables
 
-  read -p "Enter your platform xbox, psn, steam: " platform
-  platform=$(echo "$platform" | xargs)
-  platform=${platform:-"psn"}
+  # NON-INTERACTIVE MODE (called from add/remove/sniff/load)
+  if [ ! -t 0 ]; then
+    read platform
+    read net
+    read sniff_flag
+    read snum
 
-  reject_str=$(get_platform_match_str $platform)
-  echo $platform > /tmp/data.txt
+    ids=()
+    for ((i=0;i<snum;i++)); do
+      read sid
+      ids+=( "system$((i+1));$sid" )
+    done
+  else
+    reset_ip_tables
 
-  read -p "Enter your network/netmask: " net
-  net=$(echo "$net" | xargs)
-  net=${net:-$DEFAULT_NET}
-  echo $net >> /tmp/data.txt
+    read -p "Enter your platform xbox, psn, steam: " platform
+    platform=$(echo "$platform" | xargs)
+    platform=${platform:-"psn"}
 
-  ids=()
-  read -p "Would you like to sniff the ID automatically?(psn/xbox/steam only) y/n: " yn
-  yn=${yn:-"y"}
-  if ! [[ $platform =~ ^(psn|xbox|steam)$ ]]; then
-    yn="n"
-  fi
-  echo "n" >> /tmp/data.txt
+    read -p "Enter your network/netmask: " net
+    net=$(echo "$net" | xargs)
+    net=${net:-$DEFAULT_NET}
 
-  if [ "$yn" == "y" ]; then
+    ids=()
+    read -p "Would you like to sniff the ID automatically?(psn/xbox/steam only) y/n: " yn
+    yn=${yn:-"y"}
 
-    echo -e "${RED}Press any key to stop sniffing. DO NOT CTRL C${NC}"
-    sleep 1
-    if [ $platform == "psn" ]; then
-      ngrep -l -q -W byline -d $INTERFACE "psn-4" udp | grep --line-buffered -o -P 'psn-4[0]{8}\K[A-F0-9]{7}' | tee -a /tmp/data.txt &
-    elif [ $platform == "xbox" ]; then
-      ngrep -l -q -W byline -d $INTERFACE "xboxpwid:" udp | grep --line-buffered -o -P 'xboxpwid:[A-F0-9]{24}\K[A-F0-9]{8}' | tee -a /tmp/data.txt &
-    elif [ $platform == "steam" ]; then
-      ngrep -l -q -W byline -d $INTERFACE "steamid:" udp | grep --line-buffered -o -P 'steamid:[0-9]{7}\K[0-9]{10}' | tee -a /tmp/data.txt &
+    echo $platform > /tmp/data.txt
+    echo $net >> /tmp/data.txt
+    echo "n" >> /tmp/data.txt
+
+    if [ "$yn" == "y" ]; then
+      echo -e "${RED}Press any key to stop sniffing. DO NOT CTRL C${NC}"
+      sleep 1
+      ngrep -l -q -W byline -d $INTERFACE "psn-4" udp | \
+        grep --line-buffered -o -P 'psn-4[0]{8}\K[A-F0-9]{7}' | tee -a /tmp/data.txt &
+
+      while true; do
+        read -t 1 -n 1 && break
+      done
+      pkill -15 ngrep
+
+      awk '!a[$0]++' /tmp/data.txt > /tmp/tmp && mv /tmp/tmp /tmp/data.txt
+      snum=$(tail -n +4 /tmp/data.txt | wc -l)
+      awk "NR==4{print $snum}1" /tmp/data.txt > /tmp/tmp && mv /tmp/tmp /tmp/data.txt
+
+      c=1
+      tail -n +5 /tmp/data.txt | while read line; do
+        ids+=( "system$c;$line" )
+        ((c++))
+      done
+    else
+      read -p "How many accounts are you using for this? " snum
+      echo $snum >> /tmp/data.txt
+      for ((i=0;i<snum;i++)); do
+        read -p "Enter the sniffed ID for Account $((i+1)): " sid
+        echo $sid >> /tmp/data.txt
+        ids+=( "system$((i+1));$sid" )
+      done
     fi
 
-    while [ true ] ; do
-      read -t 1 -n 1
-      if [ $? = 0 ] ; then
-        break
-      fi
-    done
-    pkill -15 ngrep
-
-    awk '!a[$0]++' /tmp/data.txt > /tmp/temp.txt && mv /tmp/temp.txt /tmp/data.txt
-    snum=$(tail -n +4 /tmp/data.txt | wc -l)
-    awk "NR==4{print $snum}1" /tmp/data.txt > /tmp/temp.txt && mv /tmp/temp.txt /tmp/data.txt
-
-    tmp_ids=$(tail -n +5 /tmp/data.txt)
-    c=1
-    while IFS= read -r line; do 
-      idf="system$c"
-      ids+=( "$idf;$line" )
-      ((c++))
-    done <<< "$tmp_ids"
-
-  else
-    read -p "How many accounts are you using for this? " snum
-    if [ $snum -lt 1 ]; then exit 1; fi
-    echo $snum >> /tmp/data.txt
-    for ((i=0;i<snum;i++)); do 
-      num=$((i+1))
-      idf="system$num"
-      read -p "Enter the sniffed ID for Account $num: " sid
-      sid=$(echo "$sid" | xargs)
-      echo $sid >> /tmp/data.txt
-      ids+=( "$idf;$sid" )
-    done
+    mv /tmp/data.txt ./data.txt
   fi
 
-  mv /tmp/data.txt ./data.txt
-
+  reset_ip_tables
+  reject_str=$(get_platform_match_str $platform)
   echo "-m string --string $reject_str --algo bm -j REJECT" > reject.rule
   sudo iptables -I FORWARD -m string --string $reject_str --algo bm -j REJECT
-  
-  n=${#ids[*]}
+
+  n=${#ids[@]}
   INDEX=1
-  for (( i = n-1; i >= 0; i-- )); do
-    elem=${ids[i]}
-    offset=$((n - 2))
-    if [ $INDEX -gt $offset ]; then
-      inet=$net
-    else
-      inet="0.0.0.0/0"
+  for ((i=n-1;i>=0;i--)); do
+    IFS=';' read -r name sid <<< "${ids[i]}"
+    inet=$net
+
+    sudo iptables -N "$name"
+    sudo iptables -I FORWARD -s $inet -p udp -m string --string "$sid" --algo bm -j "$name"
+
+    # SUPPORT FULL ID
+    if [[ ${#sid} -gt 7 ]]; then
+      sudo iptables -I FORWARD -s $inet -p udp -m string --string "${sid: -7}" --algo bm -j "$name"
     fi
-
-    IFS=';' read -r -a id <<< "$elem"
-    sudo iptables -N "${id[0]}"
-    sudo iptables -I FORWARD -s $inet -p udp -m string --string "${id[1]}" --algo bm -j "${id[0]}"
-
-    # ADD: support full PSN ID by also matching last 7 chars
-    if [[ ${#id[1]} -gt 7 ]]; then
-      short_id="${id[1]: -7}"
-      sudo iptables -I FORWARD -s $inet -p udp -m string --string "$short_id" --algo bm -j "${id[0]}"
-    fi
-
     ((INDEX++))
   done
-  
-  INDEX1=1
+
   for i in "${ids[@]}"; do
-    IFS=';' read -r -a id <<< "$i"
-    INDEX2=1
+    IFS=';' read -r name sid <<< "$i"
     for j in "${ids[@]}"; do
       if [ "$i" != "$j" ]; then
-        if [[ $INDEX1 -eq 1 && $INDEX2 -eq 2 ]]; then
-          inet=$net
-        elif [[ $INDEX1 -eq 2 && $INDEX2 -eq 1 ]]; then
-          inet=$net
-        elif [[ $INDEX1 -gt 2 && $INDEX2 -lt 3 ]]; then
-          inet=$net
-        else
-          inet="0.0.0.0/0"
-        fi
-        IFS=';' read -r -a idx <<< "$j"
-        sudo iptables -A "${id[0]}" -s $inet -p udp -m string --string "${idx[1]}" --algo bm -j ACCEPT
-
-        # ADD: support full PSN ID
-        if [[ ${#idx[1]} -gt 7 ]]; then
-          short_id="${idx[1]: -7}"
-          sudo iptables -A "${id[0]}" -s $inet -p udp -m string --string "$short_id" --algo bm -j ACCEPT
+        IFS=';' read -r _ jsid <<< "$j"
+        sudo iptables -A "$name" -s $net -p udp -m string --string "$jsid" --algo bm -j ACCEPT
+        if [[ ${#jsid} -gt 7 ]]; then
+          sudo iptables -A "$name" -s $net -p udp -m string --string "${jsid: -7}" --algo bm -j ACCEPT
         fi
       fi
-      ((INDEX2++))
     done
-    ((INDEX1++))
   done
 
   iptables-save > /etc/iptables/rules.v4
-  echo "Setup is complete and matchmaking firewall is now active."
+  echo "Setup complete."
 }
 
-if [ "$action" == "setup" ]; then
-  if ! command -v ngrep &> /dev/null; then
-    install_dependencies
-  fi
-  setup
-elif [ "$action" == "stop" ]; then
-  reject=$(<reject.rule)
-  sudo iptables -D FORWARD $reject
-elif [ "$action" == "start" ]; then
-  if ! sudo iptables-save | grep -q "REJECT"; then
-    pos=$(iptables -L FORWARD | grep "system" | wc -l)
-    ((pos++))
+case "$action" in
+  setup)
+    setup
+    ;;
+  add)
+    read -p "Enter the sniffed ID: " id
+    echo $id >> data.txt
+    n=$(sed -n '4p' data.txt)
+    sed -i "4c$((n+1))" data.txt
+    bash d2firewall.sh -a setup < data.txt
+    ;;
+  list)
+    tail -n +5 data.txt | cat -n
+    ;;
+  remove)
+    list=$(tail -n +5 data.txt | cat -n)
+    echo "$list"
+    read -p "How many IDs to remove from the end? " num
+    head -n -"$num" data.txt > /tmp/data.txt && mv /tmp/data.txt data.txt
+    n=$(sed -n '4p' data.txt)
+    sed -i "4c$((n-num))" data.txt
+    bash d2firewall.sh -a setup < data.txt
+    ;;
+  sniff)
+    bash d2firewall.sh -a setup
+    ;;
+  load)
+    bash d2firewall.sh -a setup < data.txt
+    ;;
+  stop)
     reject=$(<reject.rule)
-    sudo iptables -I FORWARD $pos $reject
-  fi
-fi
+    sudo iptables -D FORWARD $reject
+    ;;
+  start)
+    reject=$(<reject.rule)
+    sudo iptables -I FORWARD $reject
+    ;;
+esac
