@@ -106,6 +106,8 @@ auto_trials () {
 
     FOUND_IDS=()
     FOUND_TIMES=()
+    FIRST_ID_TIME=0
+SUCCESS=0
 
     echo -e "${BLUE}[AUTO] Sniffing...${NC}"
 
@@ -132,9 +134,7 @@ auto_trials () {
 
       # apenas 1 ID → aguarda até 2s pela segunda
 if [ "${#FOUND_IDS[@]}" -eq 1 ]; then
-  dt=$(( ts - FOUND_TIMES[0] ))
-
-  if [ "$dt" -gt 2 ]; then
+  if [ $((ts - FIRST_ID_TIME)) -gt 2 ]; then
     echo -e "${RED}[AUTO] Only one ID after 2s. Resetting.${NC}"
     pkill -15 ngrep
     bash d2firewall.sh -a reset
