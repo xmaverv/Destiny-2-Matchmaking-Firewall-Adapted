@@ -3,7 +3,7 @@
 PROJETO_DIR="/home/ubuntu/meu-projeto"
 
 start() {
-    echo "Predictor Pro ULTIMATE | Variação nominal ($) | Sincronia SP"
+    echo "Predictor Pro QUANTUM | Motor de Microestrutura | Sincronia SP"
     cd "$PROJETO_DIR" || exit 1
 
     node -e '
@@ -21,9 +21,11 @@ async function run() {
     let bidQty = 0, askQty = 0, bestBid = 0, bestAsk = 0;
     let priceAtWindowStart = 0, lastWindowMinute = -1;
     let history2Sec = [];
+    let buyAggression = 0, sellAggression = 0; // CVD Simulado
     let lastProbAlta = 0;
     let activeAlerts = { up: { total: 0, timer: null }, down: { total: 0, timer: null } };
 
+    // Chainlink
     setInterval(async () => {
         try {
             const data = await priceFeed.latestRoundData();
@@ -39,6 +41,7 @@ async function run() {
         const stream = payload.stream;
         const msg = payload.data;
 
+        // Análise de Profundidade
         if (stream === "btcusdt@depth5") {
             bidQty = msg.bids.reduce((a, b) => a + parseFloat(b[1]), 0);
             askQty = msg.asks.reduce((a, b) => a + parseFloat(b[1]), 0);
@@ -46,8 +49,16 @@ async function run() {
             bestAsk = parseFloat(msg.asks[0][0]);
         }
 
+        // Análise de Fluxo de Ordens (Tape Reading)
         if (stream === "btcusdt@aggTrade") {
             currentPrice = parseFloat(msg.p);
+            const qty = parseFloat(msg.q);
+            const isBuyerMaker = msg.m; // m=true significa que a venda agrediu a compra
+
+            // Acumula agressão nos últimos segundos
+            if (!isBuyerMaker) buyAggression += qty; else sellAggression += qty;
+            setTimeout(() => { if (!isBuyerMaker) buyAggression -= qty; else sellAggression -= qty; }, 3000);
+
             const now = new Date();
             const currentMinute = now.getMinutes();
             const windowStartMinute = Math.floor(currentMinute / 5) * 5;
@@ -55,13 +66,12 @@ async function run() {
             if (windowStartMinute !== lastWindowMinute) {
                 if (lastWindowMinute !== -1 && priceAtWindowStart > 0) {
                     const diff = currentPrice - priceAtWindowStart;
-                    const logMsg = `[${now.toLocaleTimeString()}] FIM CICLO: ${lastWindowMinute}min | Ini: $${priceAtWindowStart.toFixed(2)} | Fim: $${currentPrice.toFixed(2)} | Var: $${diff.toFixed(2)} (${((diff/priceAtWindowStart)*100).toFixed(3)}%) | Prob: ${lastProbAlta.toFixed(1)}%\n`;
+                    const logMsg = `[${now.toLocaleTimeString()}] FIM: ${lastWindowMinute}m | Ini: $${priceAtWindowStart.toFixed(2)} | Fim: $${currentPrice.toFixed(2)} | Prob: ${lastProbAlta.toFixed(1)}%\n`;
                     fs.appendFileSync("historico_predicoes.txt", logMsg);
                 }
                 priceAtWindowStart = currentPrice;
                 lastWindowMinute = windowStartMinute;
             }
-            if (priceAtWindowStart === 0) priceAtWindowStart = currentPrice;
 
             const timestamp = Date.now();
             history2Sec.push({ p: currentPrice, t: timestamp });
@@ -77,44 +87,48 @@ async function run() {
                 activeAlerts[type].timer = setTimeout(() => { activeAlerts[type].total = 0; }, 5000);
             }
 
+            // --- NOVO MOTOR QUANTUM ---
             const elapsedSec = (now.getMinutes() % 5) * 60 + now.getSeconds();
             const progress = elapsedSec / 300;
             const secToWindow = 300 - elapsedSec;
 
-            const weightBook = 0.5 * (1 - (progress * 0.5));
-            const weightTrend = 0.3 + (progress * 0.4);
-            const weightOracle = 1 - (weightBook + weightTrend);
-
+            // 1. Score de Agressividade (Tape Reading) - Peso 30%
+            const aggressionScore = buyAggression / (buyAggression + sellAggression || 1);
+            
+            // 2. Score de Book (Liquidez) - Peso 30%
             const bookScore = bidQty / (bidQty + askQty || 1);
+
+            // 3. Score de Janela (Price Action) - Peso 30%
+            // Inclui "Aceleração": se o preço atual está muito longe do início, a força aumenta
             const trendScore = currentPrice >= priceAtWindowStart ? 1 : 0;
+            
+            // 4. Score Oráculo (Arbitragem) - Peso 10%
             const oracleScore = chainlinkPrice >= currentPrice ? 1 : 0;
 
-            const probAlta = (bookScore * weightBook + trendScore * weightTrend + oracleScore * weightOracle) * 100;
+            // Cálculo Final com Decaimento Temporal
+            // No final do ciclo, a Agressividade e a Tendência mandam mais que o Book parado.
+            const pAlta = (aggressionScore * 0.35) + (bookScore * (0.25 - (progress * 0.15))) + (trendScore * (0.3 + (progress * 0.1))) + (oracleScore * 0.1);
+            
+            const probAlta = pAlta * 100;
             lastProbAlta = probAlta;
             const probQueda = 100 - probAlta;
 
+            // UI
             const timeStr = now.toLocaleTimeString("pt-BR", { hour12: false });
-            const mid = (bestBid + bestAsk) / 2;
-            const binanceColor = currentPrice >= mid ? "\x1b[32m" : "\x1b[31m";
-            const clColor = chainlinkPrice >= lastChainlinkPrice ? "\x1b[32m" : "\x1b[31m";
-            
-            // VARIAÇÃO JANELA (Dólar e Porcentagem)
             const diffWindow = currentPrice - priceAtWindowStart;
             const pctWindow = (diffWindow / priceAtWindowStart) * 100;
             const windowColor = diffWindow >= 0 ? "\x1b[32m" : "\x1b[31m";
-            const windowSign = diffWindow >= 0 ? "+" : "";
-
+            const mid = (bestBid + bestAsk) / 2;
+            const binanceColor = currentPrice >= mid ? "\x1b[32m" : "\x1b[31m";
+            
             let probStyle = "";
-            if (secToWindow <= 10) {
-                probStyle = (now.getSeconds() % 2 === 0) ? "\x1b[7m\x1b[1m" : "\x1b[1m";
-            }
+            if (secToWindow <= 10) probStyle = (now.getSeconds() % 2 === 0) ? "\x1b[7m\x1b[1m" : "\x1b[1m";
 
-            const alertDisplay = (activeAlerts.up.total > 0 ? `\x1b[42m\x1b[30m ↑ PUMP +$${activeAlerts.up.total.toFixed(2)} \x1b[0m ` : "") +
-                               (activeAlerts.down.total > 0 ? `\x1b[41m\x1b[37m ↓ DUMP -$${activeAlerts.down.total.toFixed(2)} \x1b[0m` : "");
+            const alertDisplay = (activeAlerts.up.total > 0 ? `\x1b[42m\x1b[30m ↑ +$${activeAlerts.up.total.toFixed(2)} \x1b[0m ` : "") +
+                               (activeAlerts.down.total > 0 ? `\x1b[41m\x1b[37m ↓ -$${activeAlerts.down.total.toFixed(2)} \x1b[0m` : "");
 
-            // OUTPUT FINAL
-            process.stdout.write(`\r\x1b[K[${timeStr}] Ini: $${priceAtWindowStart.toFixed(2)} | BINANCE: ${binanceColor}$${currentPrice.toFixed(2)}\x1b[0m | Janela: ${windowColor}${windowSign}$${diffWindow.toFixed(2)} (${windowSign}${pctWindow.toFixed(3)}%)\x1b[0m | CL: ${clColor}$${chainlinkPrice.toFixed(2)}\x1b[0m\n`);
-            process.stdout.write(`\x1b[K${probStyle}PROB. FIM (${secToWindow}s): ${probAlta > 55 ? "\x1b[32m" : (probAlta < 45 ? "\x1b[31m" : "\x1b[33m")}ALTA ${probAlta.toFixed(1)}% | QUEDA ${probQueda.toFixed(1)}%\x1b[0m${probStyle.length>0?"\x1b[0m":""}  ${alertDisplay}\x1b[1F`);
+            process.stdout.write(`\r\x1b[K[${timeStr}] Ini: $${priceAtWindowStart.toFixed(2)} | BINANCE: ${binanceColor}$${currentPrice.toFixed(2)}\x1b[0m | Janela: ${windowColor}${(diffWindow>=0?"+":"")}$${Math.abs(diffWindow).toFixed(2)} (${(pctWindow>=0?"+":"")}${pctWindow.toFixed(3)}%)\x1b[0m\n`);
+            process.stdout.write(`\x1b[K${probStyle}PROB. FIM (${secToWindow}s): ${probAlta > 50 ? "\x1b[32m" : "\x1b[31m"}ALTA ${probAlta.toFixed(1)}% | QUEDA ${probQueda.toFixed(1)}%\x1b[0m${probStyle.length>0?"\x1b[0m":""}  ${alertDisplay}\x1b[1F`);
         }
     });
 
