@@ -3,7 +3,7 @@
 PROJETO_DIR="/home/ubuntu/meu-projeto"
 
 start() {
-    echo "Predictor Pro ULTIMATE | Mostrando Preço Inicial | Sincronia SP"
+    echo "Predictor Pro ULTIMATE | Variação nominal ($) | Sincronia SP"
     cd "$PROJETO_DIR" || exit 1
 
     node -e '
@@ -52,11 +52,10 @@ async function run() {
             const currentMinute = now.getMinutes();
             const windowStartMinute = Math.floor(currentMinute / 5) * 5;
 
-            // RESET DA JANELA E LOG
             if (windowStartMinute !== lastWindowMinute) {
                 if (lastWindowMinute !== -1 && priceAtWindowStart > 0) {
                     const diff = currentPrice - priceAtWindowStart;
-                    const logMsg = `[${now.toLocaleTimeString()}] FIM CICLO: ${lastWindowMinute}min | Ini: $${priceAtWindowStart.toFixed(2)} | Fim: $${currentPrice.toFixed(2)} | Var: ${diff.toFixed(2)} (${((diff/priceAtWindowStart)*100).toFixed(3)}%) | Prob: ${lastProbAlta.toFixed(1)}%\n`;
+                    const logMsg = `[${now.toLocaleTimeString()}] FIM CICLO: ${lastWindowMinute}min | Ini: $${priceAtWindowStart.toFixed(2)} | Fim: $${currentPrice.toFixed(2)} | Var: $${diff.toFixed(2)} (${((diff/priceAtWindowStart)*100).toFixed(3)}%) | Prob: ${lastProbAlta.toFixed(1)}%\n`;
                     fs.appendFileSync("historico_predicoes.txt", logMsg);
                 }
                 priceAtWindowStart = currentPrice;
@@ -64,7 +63,6 @@ async function run() {
             }
             if (priceAtWindowStart === 0) priceAtWindowStart = currentPrice;
 
-            // HISTÓRICO ALERTAS $5
             const timestamp = Date.now();
             history2Sec.push({ p: currentPrice, t: timestamp });
             history2Sec = history2Sec.filter(h => h.t > (timestamp - 3000));
@@ -79,7 +77,6 @@ async function run() {
                 activeAlerts[type].timer = setTimeout(() => { activeAlerts[type].total = 0; }, 5000);
             }
 
-            // MOTOR DE PROBABILIDADE
             const elapsedSec = (now.getMinutes() % 5) * 60 + now.getSeconds();
             const progress = elapsedSec / 300;
             const secToWindow = 300 - elapsedSec;
@@ -96,13 +93,16 @@ async function run() {
             lastProbAlta = probAlta;
             const probQueda = 100 - probAlta;
 
-            // INTERFACE
             const timeStr = now.toLocaleTimeString("pt-BR", { hour12: false });
             const mid = (bestBid + bestAsk) / 2;
             const binanceColor = currentPrice >= mid ? "\x1b[32m" : "\x1b[31m";
             const clColor = chainlinkPrice >= lastChainlinkPrice ? "\x1b[32m" : "\x1b[31m";
-            const pctWindow = ((currentPrice - priceAtWindowStart) / priceAtWindowStart) * 100;
-            const windowColor = pctWindow >= 0 ? "\x1b[32m" : "\x1b[31m";
+            
+            // VARIAÇÃO JANELA (Dólar e Porcentagem)
+            const diffWindow = currentPrice - priceAtWindowStart;
+            const pctWindow = (diffWindow / priceAtWindowStart) * 100;
+            const windowColor = diffWindow >= 0 ? "\x1b[32m" : "\x1b[31m";
+            const windowSign = diffWindow >= 0 ? "+" : "";
 
             let probStyle = "";
             if (secToWindow <= 10) {
@@ -112,8 +112,8 @@ async function run() {
             const alertDisplay = (activeAlerts.up.total > 0 ? `\x1b[42m\x1b[30m ↑ PUMP +$${activeAlerts.up.total.toFixed(2)} \x1b[0m ` : "") +
                                (activeAlerts.down.total > 0 ? `\x1b[41m\x1b[37m ↓ DUMP -$${activeAlerts.down.total.toFixed(2)} \x1b[0m` : "");
 
-            // EXIBIÇÃO: AGORA COM PREÇO INICIAL (Ini)
-            process.stdout.write(`\r\x1b[K[${timeStr}] Ini: $${priceAtWindowStart.toFixed(2)} | BINANCE: ${binanceColor}$${currentPrice.toFixed(2)}\x1b[0m | Janela: ${windowColor}${(pctWindow>=0?"+":"")}${pctWindow.toFixed(3)}%\x1b[0m | CL: ${clColor}$${chainlinkPrice.toFixed(2)}\x1b[0m\n`);
+            // OUTPUT FINAL
+            process.stdout.write(`\r\x1b[K[${timeStr}] Ini: $${priceAtWindowStart.toFixed(2)} | BINANCE: ${binanceColor}$${currentPrice.toFixed(2)}\x1b[0m | Janela: ${windowColor}${windowSign}$${diffWindow.toFixed(2)} (${windowSign}${pctWindow.toFixed(3)}%)\x1b[0m | CL: ${clColor}$${chainlinkPrice.toFixed(2)}\x1b[0m\n`);
             process.stdout.write(`\x1b[K${probStyle}PROB. FIM (${secToWindow}s): ${probAlta > 55 ? "\x1b[32m" : (probAlta < 45 ? "\x1b[31m" : "\x1b[33m")}ALTA ${probAlta.toFixed(1)}% | QUEDA ${probQueda.toFixed(1)}%\x1b[0m${probStyle.length>0?"\x1b[0m":""}  ${alertDisplay}\x1b[1F`);
         }
     });
