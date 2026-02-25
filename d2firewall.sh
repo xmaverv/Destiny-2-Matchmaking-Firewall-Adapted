@@ -3,7 +3,7 @@
 PROJETO_DIR="/home/ubuntu/meu-projeto"
 
 start() {
-    echo "Monitor de Alta Volatilidade: Binance + Alerta Real \$5 + Polymarket 5min"
+    echo "Monitor de Volatilidade Instantânea: Alerta \$5 em 2s | Polymarket 5min"
     cd "$PROJETO_DIR" || exit 1
 
     node -e '
@@ -18,9 +18,9 @@ async function run() {
 
     let chainlinkPrice = 0;
     let currentPrice = 0;
-    let referencePrice = 0; // Preço base para o alerta de $5
     let price5MinAgo = 0;
     let history5Min = [];
+    let history2Sec = []; // Janela para o alerta de 2 segundos
 
     // 1. Chainlink (Atualiza a cada 5s)
     setInterval(async () => {
@@ -30,12 +30,17 @@ async function run() {
         } catch (e) {}
     }, 5000);
 
-    // 2. Lógica Polymarket (Janela de 5 minutos)
+    // 2. Histórico para as métricas de tempo (1s e 5min)
     setInterval(() => {
         if (currentPrice > 0) {
+            // Janela de 5 minutos (300 amostras)
             history5Min.push(currentPrice);
             if (history5Min.length > 300) history5Min.shift();
             price5MinAgo = history5Min[0];
+
+            // Janela de Alerta Instantâneo (2 amostras = 2 segundos)
+            history2Sec.push(currentPrice);
+            if (history2Sec.length > 2) history2Sec.shift();
         }
     }, 1000);
 
@@ -44,43 +49,31 @@ async function run() {
     ws.on("message", (data) => {
         const msg = JSON.parse(data);
         currentPrice = parseFloat(msg.p);
-        
-        // Inicializa o preço de referência no primeiro trade
-        if (referencePrice === 0) referencePrice = currentPrice;
-
         const now = new Date().toLocaleTimeString("pt-BR", { hour12: false });
-        let alertMessage = "";
-
-        // CALCULA MOVIMENTO ABRUPTO ($5 em relação à última referência)
-        const priceDiff = currentPrice - referencePrice;
         
-        if (Math.abs(priceDiff) >= 5) {
-            const direction = priceDiff >= 5 ? "PUMP ↑" : "DUMP ↓";
-            const alertColor = priceDiff >= 5 ? "\x1b[42m" : "\x1b[41m"; // Verde para Pump, Vermelho para Dump
+        let alertMessage = "";
+        const price2sAgo = history2Sec[0] || currentPrice;
+        const instantDiff = currentPrice - price2sAgo;
+
+        // LÓGICA DE ALERTA: $5 de movimento em relação ao preço de 2 segundos atrás
+        if (Math.abs(instantDiff) >= 5) {
+            const direction = instantDiff >= 5 ? "FOGUETE ↑" : "QUEDA LIVRE ↓";
+            const alertColor = instantDiff >= 5 ? "\x1b[42m" : "\x1b[41m"; // Fundo Verde ou Vermelho
             
-            // Mensagem de Alerta que ficará visível
-            alertMessage = `${alertColor}!! ${direction} $${Math.abs(priceDiff).toFixed(2)} !!\x1b[0m `;
-            
-            // Emite BIP sonoro
-            process.stdout.write("\x07");
-            
-            // Atualiza a referência para o novo patamar
-            referencePrice = currentPrice;
+            // Exibe o alerta em uma linha nova para não perder o histórico visual
+            process.stdout.write(`\n\x07${alertColor}[MOVIMENTO ABRUPTO: ${direction} $${Math.abs(instantDiff).toFixed(2)} em 2s]\x1b[0m\n`);
         }
 
-        // Porcentagem 5 min
+        // Porcentagem 5 min (Estilo Polymarket)
         let pct5min = 0;
         if (price5MinAgo > 0) {
             pct5min = ((currentPrice - price5MinAgo) / price5MinAgo) * 100;
         }
         const pctColor = pct5min >= 0 ? "\x1b[32m+" : "\x1b[31m";
 
-        // Saída do terminal
+        // Saída frenética
         process.stdout.write(
-            `\r\x1b[K[${now}] ${alertMessage}BINANCE: $${currentPrice.toFixed(2)} | ` +
-            `5min: ${pctColor}${pct5min.toFixed(3)}%\x1b[0m | ` +
-            `REF: $${referencePrice.toFixed(0)} | ` +
-            `CL: $${chainlinkPrice.toFixed(2)}`
+            `\r\x1b[K[${now}] BINANCE: $${currentPrice.toFixed(2)} | 5min: ${pctColor}${pct5min.toFixed(3)}%\x1b[0m | CL: $${chainlinkPrice.toFixed(2)}`
         );
     });
 
@@ -99,6 +92,5 @@ stop() {
 case "$1" in
     start) start ;;
     stop) stop ;;
-    restart) stop; start ;;
     *) echo "Uso: $0 {start|stop}" ;;
 esac
