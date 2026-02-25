@@ -1,45 +1,53 @@
 #!/bin/bash
 
 # --- CONFIGURAÇÃO ---
-# Definindo o caminho onde o ethers está instalado
 PROJETO_DIR="/home/ubuntu/meu-projeto"
 
 # --- FUNÇÃO START ---
 start() {
-    echo "Conectando ao RPC da Polygon..."
+    echo "Iniciando monitoramento contínuo (1s)... Pressione CTRL+C para parar."
     
-    # Entra na pasta onde os módulos existem
     cd "$PROJETO_DIR" || exit 1
 
-    # Executa o Node.js com o código limpo
+    # Executa o Node.js em modo de loop infinito
     node -e '
 const { ethers } = require("ethers");
 
-async function getBtcPrice() {
+async function monitor() {
     const provider = new ethers.JsonRpcProvider("https://polygon-bor-rpc.publicnode.com");
     const btcUsdAddress = "0xc907E116054Ad103354f2D350FD2514433D57F6f";
     const abi = ["function latestRoundData() view returns (uint80, int256, uint256, uint256, uint80)"];
     const priceFeed = new ethers.Contract(btcUsdAddress, abi, provider);
 
-    try {
-        const roundData = await priceFeed.latestRoundData();
-        const price = Number(roundData[1]) / 1e8;
-        console.log("------------------------------------------");
-        console.log("Preço BTC/USD (Chainlink): $" + price);
-        console.log("------------------------------------------");
-    } catch (error) {
-        console.error("Erro na consulta:", error.message);
+    console.clear();
+    console.log("=== MONITORAMENTO CHAINLINK BTC/USD ===");
+
+    while (true) {
+        try {
+            const roundData = await priceFeed.latestRoundData();
+            const price = Number(roundData[1]) / 1e8;
+            const timestamp = new Date().toLocaleTimeString();
+            
+            // Move o cursor para cima para atualizar o preço no mesmo lugar
+            process.stdout.write(`\rHora: ${timestamp} | Preço: $${price.toFixed(2)}      `);
+            
+        } catch (error) {
+            process.stdout.write(`\rErro na conexão: Tentando reconectar...      `);
+        }
+        // Aguarda 1000ms (1 segundo) antes da próxima consulta
+        await new Promise(resolve => setTimeout(resolve, 1000));
     }
 }
-getBtcPrice();
+monitor();
 '
 }
 
 # --- FUNÇÃO STOP ---
 stop() {
-    echo "Limpando processos..."
+    echo "Interrompendo monitoramento..."
+    # Encerra o processo do Node
     pkill -f "node" 2>/dev/null
-    echo "Status: Parado."
+    echo "Status: Monitoramento Finalizado."
 }
 
 # --- CONTROLE ---
