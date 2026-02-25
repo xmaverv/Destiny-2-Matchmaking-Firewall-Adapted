@@ -4,15 +4,18 @@
 start() {
     echo "Conectando ao RPC da Polygon..."
     
-    node -e '
-    const { ethers } = require("ethers");
+    # O comando abaixo usa o diretório atual para procurar os node_modules
+    # Isso resolve o problema do "Cannot find module ethers"
+    export NODE_PATH=$(pwd)/node_modules
 
-    // Lista de RPCs alternativas caso a principal falhe
+    node -e '
+    const { ethers } = require("ethers"); 
+
     const rpcUrls = [
       "https://polygon-bor-rpc.publicnode.com",
       "https://1rpc.io/matic",
       "https://polygon.llamarpc.com"
-    ];
+    ]; 
 
     const btcUsdAddress = "0xc907E116054Ad103354f2D350FD2514433D57F6f"; [cite: 2]
     const aggregatorV3InterfaceABI = [
@@ -20,7 +23,6 @@ start() {
     ]; [cite: 3]
 
     async function getBtcPrice() {
-      // Tenta cada RPC da lista até uma funcionar
       for (const url of rpcUrls) {
         try {
           const provider = new ethers.JsonRpcProvider(url); 
@@ -33,12 +35,12 @@ start() {
           console.log(`Conectado via: ${url}`);
           console.log(`Preço Oficial Chainlink (BTC/USD): $${price}`); [cite: 6]
           console.log("------------------------------------------");
-          return; // Sai da função se tiver sucesso
+          return;
         } catch (err) {
-          console.warn(`Falha na RPC ${url}, tentando a próxima...`);
+          continue;
         }
       }
-      console.error("Todas as RPCs falharam. Verifique sua conexão.");
+      console.error("Erro: Não foi possível conectar a nenhuma RPC.");
     }
 
     getBtcPrice();
@@ -47,12 +49,12 @@ start() {
 
 # --- FUNÇÃO STOP ---
 stop() {
-    echo "Encerrando monitoramento..."
+    echo "Encerrando processo..."
     pkill -f "node" 2>/dev/null
-    echo "Status: Conexões finalizadas."
+    echo "Status: Parado."
 }
 
-# --- CONTROLE DE EXECUÇÃO ---
+# --- CONTROLE ---
 case "$1" in
     start)
         start
@@ -60,11 +62,7 @@ case "$1" in
     stop)
         stop
         ;;
-    restart)
-        stop
-        start
-        ;;
     *)
-        echo "Uso: $0 {start|stop|restart}"
+        echo "Uso: $0 {start|stop}"
         exit 1
 esac
