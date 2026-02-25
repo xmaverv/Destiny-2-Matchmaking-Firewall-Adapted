@@ -3,7 +3,7 @@
 PROJETO_DIR="/home/ubuntu/meu-projeto"
 
 start() {
-    echo "Iniciando Predictor Pro: Janelas Fixas de Relógio + Motor de Alta Precisão"
+    echo "Predictor Pro | Estabilização de Alertas e Interface | Sincronia SP"
     cd "$PROJETO_DIR" || exit 1
 
     node -e '
@@ -22,7 +22,7 @@ async function run() {
     let history2Sec = [];
     let activeAlerts = { up: { total: 0, timer: null }, down: { total: 0, timer: null } };
 
-    // 1. Chainlink (Background)
+    // Feed Chainlink
     setInterval(async () => {
         try {
             const data = await priceFeed.latestRoundData();
@@ -31,7 +31,6 @@ async function run() {
         } catch (e) {}
     }, 5000);
 
-    // 2. WebSocket Combined (aggTrade + depth5)
     const ws = new WebSocket("wss://stream.binance.com:9443/stream?streams=btcusdt@aggTrade/btcusdt@depth5");
 
     ws.on("message", (data) => {
@@ -39,7 +38,6 @@ async function run() {
         const stream = payload.stream;
         const msg = payload.data;
 
-        // CAPTURA DE BOOK (Depth 5)
         if (stream === "btcusdt@depth5") {
             bidQty = msg.bids.reduce((a, b) => a + parseFloat(b[1]), 0);
             askQty = msg.asks.reduce((a, b) => a + parseFloat(b[1]), 0);
@@ -47,53 +45,47 @@ async function run() {
             bestAsk = parseFloat(msg.asks[0][0]);
         }
 
-        // PROCESSAMENTO DE TRADE E RELÓGIO
         if (stream === "btcusdt@aggTrade") {
             currentPrice = parseFloat(msg.p);
-            
-            // --- SINCRONIZAÇÃO RELÓGIO FIXO (SP) ---
             const now = new Date();
+            
+            // Lógica de Janela Fixa (Relógio SP) - Garantindo Reset
             const currentMinute = now.getMinutes();
             const windowStartMinute = Math.floor(currentMinute / 5) * 5;
-
-            // Reset Crítico: Se o minuto do relógio mudou para um múltiplo de 5, fixa novo preço base
             if (windowStartMinute !== lastWindowMinute) {
                 priceAtWindowStart = currentPrice;
                 lastWindowMinute = windowStartMinute;
             }
+            if (priceAtWindowStart === 0) priceAtWindowStart = currentPrice;
 
-            // Histórico rápido (2s)
-            history2Sec.push({ p: currentPrice, t: Date.now() });
-            if (history2Sec.length > 20) history2Sec.shift(); // Aumentado para rastrear momentum
+            // Histórico para Alerta de $5 (Mínimo de 2 segundos)
+            const timestamp = Date.now();
+            history2Sec.push({ p: currentPrice, t: timestamp });
+            history2Sec = history2Sec.filter(h => h.t > (timestamp - 3000)); // Mantém 3s de buffer
 
-            // Alerta de $5 em 2s
-            const oldPriceObj = history2Sec.find(h => h.t <= (Date.now() - 2000)) || history2Sec[0];
+            const oldPriceObj = history2Sec.find(h => h.t <= (timestamp - 2000)) || history2Sec[0];
             const instantDiff = currentPrice - oldPriceObj.p;
+
+            // Disparo de Alerta $5
             if (Math.abs(instantDiff) >= 5) {
                 const type = instantDiff >= 5 ? "up" : "down";
                 activeAlerts[type].total += Math.abs(instantDiff);
-                process.stdout.write("\x07"); 
+                process.stdout.write("\x07"); // BIP
                 clearTimeout(activeAlerts[type].timer);
                 activeAlerts[type].timer = setTimeout(() => { activeAlerts[type].total = 0; }, 5000);
             }
 
-            // --- MOTOR DE PROBABILIDADE AVANÇADO ---
-            // 1. Intensidade do Book (0-45%): Relação entre Bids e Asks
-            const bookImbalance = bidQty / (bidQty + askQty);
+            // Motor de Probabilidade
+            const bookImbalance = bidQty / (bidQty + askQty || 1);
             const scoreBook = bookImbalance * 45;
-
-            // 2. Velocity Momentum (0-35%): Aceleração do preço nos últimos 2s
             const velocity = (currentPrice - oldPriceObj.p);
             const scoreVelocity = velocity > 0 ? 35 : (velocity < 0 ? 0 : 17.5);
-
-            // 3. Oráculo Bias (0-20%): Distância para o preço "Justo" da Chainlink
             const clGap = chainlinkPrice - currentPrice;
             const scoreOraculo = clGap > 1 ? 20 : (clGap < -1 ? 0 : 10);
-
             const probAlta = scoreBook + scoreVelocity + scoreOraculo;
             const probQueda = 100 - probAlta;
 
-            // --- UI ---
+            // Cores e UI
             const timeStr = now.toLocaleTimeString("pt-BR", { hour12: false });
             const secToWindow = 300 - ((now.getMinutes() % 5) * 60 + now.getSeconds());
             const mid = (bestBid + bestAsk) / 2;
@@ -101,14 +93,17 @@ async function run() {
             const clColor = chainlinkPrice >= lastChainlinkPrice ? "\x1b[32m" : "\x1b[31m";
             const probColor = probAlta > 55 ? "\x1b[32m" : (probAlta < 45 ? "\x1b[31m" : "\x1b[33m");
             const pctWindow = ((currentPrice - priceAtWindowStart) / priceAtWindowStart) * 100;
+            const windowColor = pctWindow >= 0 ? "\x1b[32m" : "\x1b[31m";
 
-            const alertDisplay = (activeAlerts.up.total > 0 ? `\x1b[42m\x1b[30m ↑ +$${activeAlerts.up.total.toFixed(2)} \x1b[0m ` : "") +
-                               (activeAlerts.down.total > 0 ? `\x1b[41m\x1b[37m ↓ -$${activeAlerts.down.total.toFixed(2)} \x1b[0m` : "");
+            const alertDisplay = (activeAlerts.up.total > 0 ? `\x1b[42m\x1b[30m ↑ PUMP +$${activeAlerts.up.total.toFixed(2)} \x1b[0m ` : "") +
+                               (activeAlerts.down.total > 0 ? `\x1b[41m\x1b[37m ↓ DUMP -$${activeAlerts.down.total.toFixed(2)} \x1b[0m` : "");
 
-            const line1 = `\r\x1b[K[${timeStr}] BINANCE: ${binanceColor}$${currentPrice.toFixed(2)}\x1b[0m | Janela 5m: ${(pctWindow>=0?"+":"")}${pctWindow.toFixed(3)}% | CL: ${clColor}$${chainlinkPrice.toFixed(2)}\x1b[0m`;
-            const line2 = `\n\x1b[KPROB. FECHAMENTO (${secToWindow}s): ${probColor}ALTA ${probAlta.toFixed(1)}% | QUEDA ${probQueda.toFixed(1)}%\x1b[0m  ${alertDisplay}`;
-            
-            process.stdout.write(line1 + line2 + "\x1b[1F");
+            // Interface em Duas Linhas (Reforçada)
+            // \r\x1b[K limpa a linha e volta pro início
+            // \n pula e limpa a próxima
+            // \x1b[1F sobe o cursor de volta para a primeira linha
+            process.stdout.write(`\r\x1b[K[${timeStr}] BINANCE: ${binanceColor}$${currentPrice.toFixed(2)}\x1b[0m | Janela 5m: ${windowColor}${(pctWindow>=0?"+":"")}${pctWindow.toFixed(3)}%\x1b[0m | CL: ${clColor}$${chainlinkPrice.toFixed(2)}\x1b[0m\n`);
+            process.stdout.write(`\x1b[KPROB. FIM (${secToWindow}s): ${probColor}ALTA ${probAlta.toFixed(1)}% | QUEDA ${probQueda.toFixed(1)}%\x1b[0m  ${alertDisplay}\x1b[1F`);
         }
     });
 
@@ -119,8 +114,8 @@ run();
 }
 
 stop() {
-    echo "Parando monitoramento..."
     pkill -f "node" 2>/dev/null
+    echo "Monitor parado."
 }
 
 case "$1" in
