@@ -1,47 +1,48 @@
 #!/bin/bash
 
+# --- CONFIGURAÇÃO DE CAMINHO ---
+# Altere para o caminho absoluto onde você instalou o ethers
+PROJETO_DIR="/home/ubuntu/meu-projeto"
+
 # --- FUNÇÃO START ---
 start() {
-    echo "Conectando ao RPC da Polygon..."
+    echo "Iniciando consulta ao Oráculo Chainlink (BTC/USD)..."
     
-    # Define o caminho para localizar o modulo ethers na sua pasta atual
-    export NODE_PATH=$(pwd)/node_modules
+    # Entra na pasta do projeto para garantir o acesso ao node_modules
+    cd "$PROJETO_DIR" || { echo "Erro: Pasta $PROJETO_DIR não encontrada"; exit 1; }
 
     node -e '
-const { ethers } = require("ethers");
+    const { ethers } = require("ethers");
 
-async function getBtcPrice() {
-    const rpcUrls = [
-        "https://polygon-bor-rpc.publicnode.com",
-        "https://1rpc.io/matic",
-        "https://polygon.llamarpc.com"
-    ];
+    async function getBtcPrice() {
+        // Conexão com RPC pública da Polygon 
+        const provider = new ethers.JsonRpcProvider("https://polygon-bor-rpc.publicnode.com");
+        
+        // Endereço do contrato de Feed BTC/USD da Chainlink na Polygon [cite: 2]
+        const btcUsdAddress = "0xc907E116054Ad103354f2D350FD2514433D57F6f";
+        
+        // ABI contendo apenas a função que precisamos [cite: 3]
+        const aggregatorV3InterfaceABI = [
+          "function latestRoundData() view returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)"
+        ];
+        
+        const priceFeed = new ethers.Contract(btcUsdAddress, aggregatorV3InterfaceABI, provider); [cite: 4]
 
-    const btcUsdAddress = "0xc907E116054Ad103354f2D350FD2514433D57F6f";
-    const aggregatorV3InterfaceABI = [
-        "function latestRoundData() view returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)"
-    ];
-
-    for (const url of rpcUrls) {
         try {
-            const provider = new ethers.JsonRpcProvider(url);
-            const priceFeed = new ethers.Contract(btcUsdAddress, aggregatorV3InterfaceABI, provider);
-            const roundData = await priceFeed.latestRoundData();
-            const price = Number(roundData.answer) / 10**8;
+            const roundData = await priceFeed.latestRoundData(); [cite: 4]
+            // O valor retorna como BigInt com 8 casas decimais [cite: 5]
+            const price = Number(roundData.answer) / 10**8; [cite: 6]
             
             console.log("------------------------------------------");
-            console.log("Preço Oficial Chainlink (BTC/USD): $" + price);
+            console.log(`Preço Oficial Chainlink (BTC/USD): $${price}`); [cite: 6]
             console.log("------------------------------------------");
-            return;
         } catch (error) {
-            continue;
+            console.error("Erro ao buscar o preço:", error); [cite: 7]
         }
     }
-    console.error("Erro: Nao foi possivel conectar as RPCs.");
-}
 
-getBtcPrice();
-'
+    getBtcPrice();
+    '
 }
 
 # --- FUNÇÃO STOP ---
