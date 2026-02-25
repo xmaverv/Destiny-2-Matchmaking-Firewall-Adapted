@@ -3,7 +3,7 @@
 PROJETO_DIR="/home/ubuntu/meu-projeto"
 
 start() {
-    echo "Monitor Master: Binance Book Colors + Chainlink Trend + Alertas Agrupados"
+    echo "Monitor Master: Janelas Fixas de 5min (Relógio SP) + Book Sentiment"
     cd "$PROJETO_DIR" || exit 1
 
     node -e '
@@ -21,15 +21,18 @@ async function run() {
     let currentPrice = 0;
     let bestBid = 0;
     let bestAsk = 0;
-    let history5Min = [];
-    let history2Sec = [];
     
+    // Lógica de Janela Fixa (Relógio Real)
+    let priceAtWindowStart = 0;
+    let lastWindowMinute = -1;
+
+    let history2Sec = [];
     let activeAlerts = {
         up: { total: 0, timer: null },
         down: { total: 0, timer: null }
     };
 
-    // 1. Chainlink com detecção de tendência (Cima/Baixo)
+    // 1. Chainlink (Background)
     setInterval(async () => {
         try {
             const data = await priceFeed.latestRoundData();
@@ -41,17 +44,28 @@ async function run() {
         } catch (e) {}
     }, 5000);
 
-    // 2. Histórico temporal
+    // 2. Sincronização com o Relógio para Janela de 5min
     setInterval(() => {
+        const now = new Date();
+        const currentMinute = now.getMinutes();
+        
+        // Calcula o início da janela de 5 min (0, 5, 10, 15...)
+        const windowStartMinute = Math.floor(currentMinute / 5) * 5;
+
+        // Se mudamos de janela (ex: de 04:59 para 05:00), resetamos o preço base
+        if (windowStartMinute !== lastWindowMinute) {
+            priceAtWindowStart = currentPrice;
+            lastWindowMinute = windowStartMinute;
+        }
+
+        // Histórico de 2s para alerta de volatilidade
         if (currentPrice > 0) {
-            history5Min.push(currentPrice);
-            if (history5Min.length > 300) history5Min.shift();
             history2Sec.push(currentPrice);
             if (history2Sec.length > 2) history2Sec.shift();
         }
     }, 1000);
 
-    // 3. WebSocket Binance - Combinando Trades e Book
+    // 3. WebSocket Binance
     const ws = new WebSocket("wss://stream.binance.com:9443/stream?streams=btcusdt@aggTrade/btcusdt@bookTicker");
 
     ws.on("message", (data) => {
@@ -66,9 +80,12 @@ async function run() {
 
         if (stream === "btcusdt@aggTrade") {
             currentPrice = parseFloat(msg.p);
-            const now = new Date().toLocaleTimeString("pt-BR", { hour12: false });
+            if (priceAtWindowStart === 0) priceAtWindowStart = currentPrice;
+
+            const now = new Date();
+            const timeStr = now.toLocaleTimeString("pt-BR", { hour12: false });
             
-            // Lógica de Alerta de $5
+            // Lógica de Alerta de $5 em 2s
             const price2sAgo = history2Sec[0] || currentPrice;
             const instantDiff = currentPrice - price2sAgo;
 
@@ -79,31 +96,22 @@ async function run() {
                 activeAlerts[type].timer = setTimeout(() => { activeAlerts[type].total = 0; }, 5000);
             }
 
-            // COR BINANCE (Baseada no Book: mais perto do Bid = Verde, mais perto do Ask = Vermelho)
-            let binanceColor = "\x1b[37m"; // Branco padrão
-            if (bestBid > 0 && bestAsk > 0) {
-                const mid = (bestBid + bestAsk) / 2;
-                binanceColor = currentPrice >= mid ? "\x1b[32m" : "\x1b[31m";
-            }
+            // Cores baseadas no Order Book e Tendência Chainlink
+            const mid = (bestBid + bestAsk) / 2;
+            const binanceColor = currentPrice >= mid ? "\x1b[32m" : "\x1b[31m";
+            const clColor = chainlinkPrice >= lastChainlinkPrice ? "\x1b[32m" : "\x1b[31m";
 
-            // COR CHAINLINK (Baseada no último preço)
-            let clColor = "\x1b[37m";
-            if (lastChainlinkPrice > 0) {
-                clColor = chainlinkPrice >= lastChainlinkPrice ? "\x1b[32m" : "\x1b[31m";
-            }
+            // Cálculo da Porcentagem da JANELA ATUAL (ex: desde 10:00:00)
+            const pctWindow = ((currentPrice - priceAtWindowStart) / priceAtWindowStart) * 100;
+            const pctColor = pctWindow >= 0 ? "\x1b[32m+" : "\x1b[31m";
 
-            // Cálculo 5 min
-            let pct5min = 0;
-            if (history5Min[0] > 0) pct5min = ((currentPrice - history5Min[0]) / history5Min[0]) * 100;
-            const pctColor = pct5min >= 0 ? "\x1b[32m+" : "\x1b[31m";
-
-            // Alertas Visuais
+            // Alertas
             let alertDisplay = "";
             if (activeAlerts.up.total > 0) alertDisplay += `\x1b[42m\x1b[30m ↑ PUMP: $${activeAlerts.up.total.toFixed(2)} \x1b[0m  `;
             if (activeAlerts.down.total > 0) alertDisplay += `\x1b[41m\x1b[37m ↓ DUMP: $${activeAlerts.down.total.toFixed(2)} \x1b[0m  `;
 
-            // Print Final
-            const line1 = `\r\x1b[K[${now}] BINANCE: ${binanceColor}$${currentPrice.toFixed(2)}\x1b[0m | 5m: ${pctColor}${pct5min.toFixed(3)}%\x1b[0m | CL: ${clColor}$${chainlinkPrice.toFixed(2)}\x1b[0m`;
+            // Interface
+            const line1 = `\r\x1b[K[${timeStr}] BINANCE: ${binanceColor}$${currentPrice.toFixed(2)}\x1b[0m | Janela 5m: ${pctColor}${pctWindow.toFixed(3)}%\x1b[0m | CL: ${clColor}$${chainlinkPrice.toFixed(2)}\x1b[0m`;
             const line2 = `\n\x1b[K${alertDisplay}`;
             
             process.stdout.write(line1 + line2 + "\x1b[1F");
