@@ -26,7 +26,7 @@ async function run() {
             const now = new Date().toLocaleTimeString();
             process.stdout.write(`\r[${now}] BTC/USD: $${price.toFixed(2)} `);
         } catch (err) {
-            process.stdout.write(`\r[${new Date().toLocaleTimeString()}] Aguardando conexão... `);
+            process.stdout.write(`\r[${new Date().toLocaleTimeString()}] Erro de conexao... `);
         }
     }, 1000);
 }
