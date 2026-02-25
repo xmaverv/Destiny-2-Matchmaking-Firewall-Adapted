@@ -3,7 +3,7 @@
 PROJETO_DIR="/home/ubuntu/meu-projeto"
 
 start() {
-    echo "Monitor Profissional: Agregação de Movimento + Alertas Direcionais"
+    echo "Monitor Master: Binance Book Colors + Chainlink Trend + Alertas Agrupados"
     cd "$PROJETO_DIR" || exit 1
 
     node -e '
@@ -17,25 +17,31 @@ async function run() {
     const priceFeed = new ethers.Contract(btcUsdAddress, abi, provider);
 
     let chainlinkPrice = 0;
+    let lastChainlinkPrice = 0;
     let currentPrice = 0;
+    let bestBid = 0;
+    let bestAsk = 0;
     let history5Min = [];
     let history2Sec = [];
     
-    // Objetos para rastrear alertas ativos por direção
     let activeAlerts = {
-        up: { total: 0, timer: null, startTime: 0 },
-        down: { total: 0, timer: null, startTime: 0 }
+        up: { total: 0, timer: null },
+        down: { total: 0, timer: null }
     };
 
-    // 1. Chainlink (Background)
+    // 1. Chainlink com detecção de tendência (Cima/Baixo)
     setInterval(async () => {
         try {
             const data = await priceFeed.latestRoundData();
-            chainlinkPrice = Number(data[1]) / 1e8;
+            const newPrice = Number(data[1]) / 1e8;
+            if (newPrice !== chainlinkPrice) {
+                lastChainlinkPrice = chainlinkPrice;
+                chainlinkPrice = newPrice;
+            }
         } catch (e) {}
     }, 5000);
 
-    // 2. Histórico (1s)
+    // 2. Histórico temporal
     setInterval(() => {
         if (currentPrice > 0) {
             history5Min.push(currentPrice);
@@ -45,56 +51,63 @@ async function run() {
         }
     }, 1000);
 
-    const ws = new WebSocket("wss://stream.binance.com:9443/ws/btcusdt@aggTrade");
+    // 3. WebSocket Binance - Combinando Trades e Book
+    const ws = new WebSocket("wss://stream.binance.com:9443/stream?streams=btcusdt@aggTrade/btcusdt@bookTicker");
 
     ws.on("message", (data) => {
-        const msg = JSON.parse(data);
-        currentPrice = parseFloat(msg.p);
-        const now = new Date().toLocaleTimeString("pt-BR", { hour12: false });
-        
-        const price2sAgo = history2Sec[0] || currentPrice;
-        const instantDiff = currentPrice - price2sAgo;
+        const payload = JSON.parse(data);
+        const stream = payload.stream;
+        const msg = payload.data;
 
-        // LÓGICA DE SOMA/ACUMULAÇÃO DE MOVIMENTO
-        if (Math.abs(instantDiff) >= 5) {
-            const type = instantDiff >= 5 ? "up" : "down";
+        if (stream === "btcusdt@bookTicker") {
+            bestBid = parseFloat(msg.b);
+            bestAsk = parseFloat(msg.a);
+        }
+
+        if (stream === "btcusdt@aggTrade") {
+            currentPrice = parseFloat(msg.p);
+            const now = new Date().toLocaleTimeString("pt-BR", { hour12: false });
             
-            // Se já houver um alerta dessa direção, somamos o valor
-            activeAlerts[type].total += Math.abs(instantDiff);
-            
-            // Reinicia o cronômetro de 5 segundos para este alerta
-            clearTimeout(activeAlerts[type].timer);
-            activeAlerts[type].timer = setTimeout(() => {
-                activeAlerts[type].total = 0;
-            }, 5000);
-            
-            if (activeAlerts[type].total === Math.abs(instantDiff)) {
-                 process.stdout.write("\x07"); // BIP apenas no primeiro disparo do acúmulo
+            // Lógica de Alerta de $5
+            const price2sAgo = history2Sec[0] || currentPrice;
+            const instantDiff = currentPrice - price2sAgo;
+
+            if (Math.abs(instantDiff) >= 5) {
+                const type = instantDiff >= 5 ? "up" : "down";
+                activeAlerts[type].total += Math.abs(instantDiff);
+                clearTimeout(activeAlerts[type].timer);
+                activeAlerts[type].timer = setTimeout(() => { activeAlerts[type].total = 0; }, 5000);
             }
-        }
 
-        // Cálculo 5 min
-        let pct5min = 0;
-        if (history5Min[0] > 0) {
-            pct5min = ((currentPrice - history5Min[0]) / history5Min[0]) * 100;
-        }
-        const pctColor = pct5min >= 0 ? "\x1b[32m+" : "\x1b[31m";
+            // COR BINANCE (Baseada no Book: mais perto do Bid = Verde, mais perto do Ask = Vermelho)
+            let binanceColor = "\x1b[37m"; // Branco padrão
+            if (bestBid > 0 && bestAsk > 0) {
+                const mid = (bestBid + bestAsk) / 2;
+                binanceColor = currentPrice >= mid ? "\x1b[32m" : "\x1b[31m";
+            }
 
-        // CONSTRUÇÃO DOS BLOCOS VISUAIS
-        let alertDisplay = "";
-        if (activeAlerts.up.total > 0) {
-            alertDisplay += `\x1b[42m\x1b[30m ↑ PUMP: $${activeAlerts.up.total.toFixed(2)} \x1b[0m  `;
-        }
-        if (activeAlerts.down.total > 0) {
-            alertDisplay += `\x1b[41m\x1b[37m ↓ DUMP: $${activeAlerts.down.total.toFixed(2)} \x1b[0m  `;
-        }
+            // COR CHAINLINK (Baseada no último preço)
+            let clColor = "\x1b[37m";
+            if (lastChainlinkPrice > 0) {
+                clColor = chainlinkPrice >= lastChainlinkPrice ? "\x1b[32m" : "\x1b[31m";
+            }
 
-        // IMPRESSÃO EM DUAS LINHAS
-        // \x1b[K limpa a linha para evitar rastros
-        const line1 = `\r\x1b[K[${now}] BINANCE: $${currentPrice.toFixed(2)} | 5m: ${pctColor}${pct5min.toFixed(3)}%\x1b[0m | CL: $${chainlinkPrice.toFixed(2)}`;
-        const line2 = `\n\x1b[K${alertDisplay}`;
-        
-        process.stdout.write(line1 + line2 + "\x1b[1F"); 
+            // Cálculo 5 min
+            let pct5min = 0;
+            if (history5Min[0] > 0) pct5min = ((currentPrice - history5Min[0]) / history5Min[0]) * 100;
+            const pctColor = pct5min >= 0 ? "\x1b[32m+" : "\x1b[31m";
+
+            // Alertas Visuais
+            let alertDisplay = "";
+            if (activeAlerts.up.total > 0) alertDisplay += `\x1b[42m\x1b[30m ↑ PUMP: $${activeAlerts.up.total.toFixed(2)} \x1b[0m  `;
+            if (activeAlerts.down.total > 0) alertDisplay += `\x1b[41m\x1b[37m ↓ DUMP: $${activeAlerts.down.total.toFixed(2)} \x1b[0m  `;
+
+            // Print Final
+            const line1 = `\r\x1b[K[${now}] BINANCE: ${binanceColor}$${currentPrice.toFixed(2)}\x1b[0m | 5m: ${pctColor}${pct5min.toFixed(3)}%\x1b[0m | CL: ${clColor}$${chainlinkPrice.toFixed(2)}\x1b[0m`;
+            const line2 = `\n\x1b[K${alertDisplay}`;
+            
+            process.stdout.write(line1 + line2 + "\x1b[1F");
+        }
     });
 
     ws.on("close", () => setTimeout(run, 1000));
