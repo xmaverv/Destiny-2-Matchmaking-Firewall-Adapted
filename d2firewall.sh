@@ -3,7 +3,7 @@
 PROJETO_DIR="/home/ubuntu/meu-projeto"
 
 start() {
-    echo "Monitor Avançado: Binance (Frenético) + Alerta \$5 + Polymarket 5min Style"
+    echo "Monitor de Alta Volatilidade: Binance + Alerta Real \$5 + Polymarket 5min"
     cd "$PROJETO_DIR" || exit 1
 
     node -e '
@@ -11,18 +11,18 @@ const { ethers } = require("ethers");
 const WebSocket = require("ws");
 
 async function run() {
-    // Configuração Chainlink
     const provider = new ethers.JsonRpcProvider("https://polygon-bor-rpc.publicnode.com");
     const btcUsdAddress = "0xc907E116054Ad103354f2D350FD2514433D57F6f";
     const abi = ["function latestRoundData() view returns (uint80, int256, uint256, uint256, uint80)"];
     const priceFeed = new ethers.Contract(btcUsdAddress, abi, provider);
 
     let chainlinkPrice = 0;
-    let lastPrice = 0;
+    let currentPrice = 0;
+    let referencePrice = 0; // Preço base para o alerta de $5
     let price5MinAgo = 0;
     let history5Min = [];
 
-    // 1. Atualiza Chainlink a cada 5s
+    // 1. Chainlink (Atualiza a cada 5s)
     setInterval(async () => {
         try {
             const data = await priceFeed.latestRoundData();
@@ -30,11 +30,10 @@ async function run() {
         } catch (e) {}
     }, 5000);
 
-    // 2. Lógica Polymarket (Variação de 5 minutos)
-    // Armazena o preço a cada segundo em um array de 300 posições (5 min)
+    // 2. Lógica Polymarket (Janela de 5 minutos)
     setInterval(() => {
-        if (lastPrice > 0) {
-            history5Min.push(lastPrice);
+        if (currentPrice > 0) {
+            history5Min.push(currentPrice);
             if (history5Min.length > 300) history5Min.shift();
             price5MinAgo = history5Min[0];
         }
@@ -44,33 +43,45 @@ async function run() {
 
     ws.on("message", (data) => {
         const msg = JSON.parse(data);
-        const currentPrice = parseFloat(msg.p);
-        const now = new Date();
-        const timeStr = now.toLocaleTimeString("pt-BR", { hour12: false });
+        currentPrice = parseFloat(msg.p);
+        
+        // Inicializa o preço de referência no primeiro trade
+        if (referencePrice === 0) referencePrice = currentPrice;
 
-        // Cálculo de Movimento Abrupto (Delta $5)
-        let alert = "";
-        if (lastPrice > 0 && Math.abs(currentPrice - lastPrice) >= 5) {
-            alert = `\x07 \x1b[41m[ALERTA: MOVIMENTO > $5]\x1b[0m `; // \x07 emite o BIP sonoro
+        const now = new Date().toLocaleTimeString("pt-BR", { hour12: false });
+        let alertMessage = "";
+
+        // CALCULA MOVIMENTO ABRUPTO ($5 em relação à última referência)
+        const priceDiff = currentPrice - referencePrice;
+        
+        if (Math.abs(priceDiff) >= 5) {
+            const direction = priceDiff >= 5 ? "PUMP ↑" : "DUMP ↓";
+            const alertColor = priceDiff >= 5 ? "\x1b[42m" : "\x1b[41m"; // Verde para Pump, Vermelho para Dump
+            
+            // Mensagem de Alerta que ficará visível
+            alertMessage = `${alertColor}!! ${direction} $${Math.abs(priceDiff).toFixed(2)} !!\x1b[0m `;
+            
+            // Emite BIP sonoro
+            process.stdout.write("\x07");
+            
+            // Atualiza a referência para o novo patamar
+            referencePrice = currentPrice;
         }
 
-        // Cálculo de Porcentagem 5 min (Estilo Polymarket)
+        // Porcentagem 5 min
         let pct5min = 0;
         if (price5MinAgo > 0) {
             pct5min = ((currentPrice - price5MinAgo) / price5MinAgo) * 100;
         }
         const pctColor = pct5min >= 0 ? "\x1b[32m+" : "\x1b[31m";
 
-        // Cor do preço (Binance)
-        const priceColor = currentPrice >= lastPrice ? "\x1b[32m" : "\x1b[31m";
-
+        // Saída do terminal
         process.stdout.write(
-            `\r\x1b[K[${timeStr}] ${alert}${priceColor}BINANCE: $${currentPrice.toFixed(2)}\x1b[0m | ` +
+            `\r\x1b[K[${now}] ${alertMessage}BINANCE: $${currentPrice.toFixed(2)} | ` +
             `5min: ${pctColor}${pct5min.toFixed(3)}%\x1b[0m | ` +
-            `CHAINLINK: $${chainlinkPrice.toFixed(2)}`
+            `REF: $${referencePrice.toFixed(0)} | ` +
+            `CL: $${chainlinkPrice.toFixed(2)}`
         );
-
-        lastPrice = currentPrice;
     });
 
     ws.on("close", () => setTimeout(run, 1000));
