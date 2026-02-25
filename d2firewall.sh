@@ -3,7 +3,7 @@
 PROJETO_DIR="/home/ubuntu/meu-projeto"
 
 start() {
-    echo "Monitor Profissional: Alertas Acumulativos (5s) + Janela de 2s"
+    echo "Monitor Profissional: Agregação de Movimento + Alertas Direcionais"
     cd "$PROJETO_DIR" || exit 1
 
     node -e '
@@ -20,7 +20,12 @@ async function run() {
     let currentPrice = 0;
     let history5Min = [];
     let history2Sec = [];
-    let activeAlerts = []; // Array para armazenar alertas ativos
+    
+    // Objetos para rastrear alertas ativos por direção
+    let activeAlerts = {
+        up: { total: 0, timer: null, startTime: 0 },
+        down: { total: 0, timer: null, startTime: 0 }
+    };
 
     // 1. Chainlink (Background)
     setInterval(async () => {
@@ -30,7 +35,7 @@ async function run() {
         } catch (e) {}
     }, 5000);
 
-    // 2. Relógio de Histórico (1s)
+    // 2. Histórico (1s)
     setInterval(() => {
         if (currentPrice > 0) {
             history5Min.push(currentPrice);
@@ -50,39 +55,46 @@ async function run() {
         const price2sAgo = history2Sec[0] || currentPrice;
         const instantDiff = currentPrice - price2sAgo;
 
-        // LÓGICA DE ALERTA ACUMULATIVO
+        // LÓGICA DE SOMA/ACUMULAÇÃO DE MOVIMENTO
         if (Math.abs(instantDiff) >= 5) {
-            process.stdout.write("\x07"); // BIP
-            const id = Date.now();
-            const direction = instantDiff >= 5 ? "↑" : "↓";
-            const color = instantDiff >= 5 ? "\x1b[42m" : "\x1b[41m";
-            const alertTxt = `${color}[${direction} $${Math.abs(instantDiff).toFixed(2)}]\x1b[0m`;
+            const type = instantDiff >= 5 ? "up" : "down";
             
-            activeAlerts.push({ id, txt: alertTxt });
-
-            // Remove o alerta após 5 segundos
-            setTimeout(() => {
-                activeAlerts = activeAlerts.filter(a => a.id !== id);
+            // Se já houver um alerta dessa direção, somamos o valor
+            activeAlerts[type].total += Math.abs(instantDiff);
+            
+            // Reinicia o cronômetro de 5 segundos para este alerta
+            clearTimeout(activeAlerts[type].timer);
+            activeAlerts[type].timer = setTimeout(() => {
+                activeAlerts[type].total = 0;
             }, 5000);
+            
+            if (activeAlerts[type].total === Math.abs(instantDiff)) {
+                 process.stdout.write("\x07"); // BIP apenas no primeiro disparo do acúmulo
+            }
         }
 
-        // Porcentagem 5 min
+        // Cálculo 5 min
         let pct5min = 0;
         if (history5Min[0] > 0) {
             pct5min = ((currentPrice - history5Min[0]) / history5Min[0]) * 100;
         }
         const pctColor = pct5min >= 0 ? "\x1b[32m+" : "\x1b[31m";
 
-        // CONSTRUÇÃO DA TELA (ANSI ESCAPE CODES)
-        // \x1b[s  - Salva posição do cursor
-        // \x1b[K  - Limpa linha atual
-        // \x1b[u  - Restaura cursor
-        // \n      - Próxima linha
+        // CONSTRUÇÃO DOS BLOCOS VISUAIS
+        let alertDisplay = "";
+        if (activeAlerts.up.total > 0) {
+            alertDisplay += `\x1b[42m\x1b[30m ↑ PUMP: $${activeAlerts.up.total.toFixed(2)} \x1b[0m  `;
+        }
+        if (activeAlerts.down.total > 0) {
+            alertDisplay += `\x1b[41m\x1b[37m ↓ DUMP: $${activeAlerts.down.total.toFixed(2)} \x1b[0m  `;
+        }
+
+        // IMPRESSÃO EM DUAS LINHAS
+        // \x1b[K limpa a linha para evitar rastros
+        const line1 = `\r\x1b[K[${now}] BINANCE: $${currentPrice.toFixed(2)} | 5m: ${pctColor}${pct5min.toFixed(3)}%\x1b[0m | CL: $${chainlinkPrice.toFixed(2)}`;
+        const line2 = `\n\x1b[K${alertDisplay}`;
         
-        const line1 = `\r\x1b[K[${now}] BINANCE: $${currentPrice.toFixed(2)} | 5min: ${pctColor}${pct5min.toFixed(3)}%\x1b[0m | CL: $${chainlinkPrice.toFixed(2)}`;
-        const line2 = `\n\x1b[K${activeAlerts.map(a => a.txt).join(" ")}`;
-        
-        process.stdout.write(line1 + line2 + "\x1b[1F"); // \x1b[1F volta o cursor para a linha de cima
+        process.stdout.write(line1 + line2 + "\x1b[1F"); 
     });
 
     ws.on("close", () => setTimeout(run, 1000));
